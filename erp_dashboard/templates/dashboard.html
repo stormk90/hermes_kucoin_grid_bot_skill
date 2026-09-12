@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grid Bot ERP | TradingView & Operaciones KuCoin</title>
+    <!-- Picon / Favicon Oficial del Bot -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="alternate icon" href="/static/favicon.svg">
+    <!-- Estilos en 1 sola columna vertical -->
+    <link rel="stylesheet" href="/static/dashboard.css?v=9.0">
+    <!-- Librería Oficial de TradingView -->
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+</head>
+<body>
+
+    <!-- Cabecera de Control Superior -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <div class="bot-picon-wrapper" title="Grid Bot Trading Engine">
+                    <svg class="bot-picon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <!-- Cabeza y Antena -->
+                        <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                        <circle cx="12" cy="5" r="2"></circle>
+                        <path d="M12 7v4"></path>
+                        <!-- Ojos Brillantes -->
+                        <circle cx="8.5" cy="15.5" r="1.2" fill="#58a6ff" stroke="none"></circle>
+                        <circle cx="15.5" cy="15.5" r="1.2" fill="#58a6ff" stroke="none"></circle>
+                        <!-- Boca / Indicador -->
+                        <path d="M9 18.5h6"></path>
+                    </svg>
+                </div>
+                <span>Grid Bot</span> <span>ERP Pro v4</span>
+            </div>
+            <div class="coin-selector">
+                <label for="coinSelect">Par:</label>
+                <select id="coinSelect" class="coin-select">
+                    <option value="kaspa" selected>KAS/USDT (Kaspa)</option>
+                    <option value="bitcoin">BTC/USDT (Bitcoin)</option>
+                    <option value="ethereum">ETH/USDT (Ethereum)</option>
+                    <option value="solana">SOL/USDT (Solana)</option>
+                    <option value="ripple">XRP/USDT (Ripple)</option>
+                    <option value="cardano">ADA/USDT (Cardano)</option>
+                    <option value="dogecoin">DOGE/USDT (Dogecoin)</option>
+                    <option value="polkadot">DOT/USDT (Polkadot)</option>
+                    <option value="litecoin">LTC/USDT (Litecoin)</option>
+                    <option value="chainlink">LINK/USDT (Chainlink)</option>
+                </select>
+            </div>
+        </div>
+        <div class="header-right">
+            <!-- Botón Configuración de Estrategias y Operativa Grid Bot -->
+            <button class="btn-grid-bot" id="btnOpenGridBot" type="button" title="Panel de Control y Configuración del Grid Bot">
+                🤖 Grid_Bot
+            </button>
+
+            <!-- Botón Configurar Credenciales KuCoin -->
+            <button class="btn-config" id="btnOpenConfig" type="button" title="Configurar claves de API de KuCoin">
+                ⚙️ Configurar
+            </button>
+
+            <!-- Monitor de Precio en Vivo -->
+            <div class="price-badge">
+                <span class="live-dot"></span>
+                <span class="price-val" id="headerPrice">—</span>
+                <span class="price-change" id="headerChange">—</span>
+            </div>
+
+            <!-- Botón Refrescar -->
+            <button class="btn-refresh" id="btnRefresh" onclick="refreshDashboard()" type="button">
+                🔄 Actualizar
+            </button>
+        </div>
+    </header>
+
+    <!-- Sección de Gráfico TradingView Oficial -->
+    <section class="chart-section">
+        <div class="chart-card">
+            <div class="chart-header-bar">
+                <span class="symbol-title" id="chartSymbolTitle">Gráfico en Vivo: MEXC:KASUSDT</span>
+                <span>🔴 Gráfico Profesional TradingView</span>
+            </div>
+            <div id="tradingview_widget_box" class="tradingview-container">
+                <!-- TradingView se inyecta dinámicamente aquí -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Contenedor Inferior: DISTRIBUCIÓN EN 1 SOLA COLUMNA VERTICAL -->
+    <main class="bottom-panels">
+
+        <!-- 1. Panel de Métricas del Bot -->
+        <section class="panel">
+            <div class="panel-header">
+                <h2 class="panel-title">📈 Métricas de Rendimiento</h2>
+            </div>
+            <div class="metrics-row">
+                <div class="metric-card">
+                    <span class="metric-label">Capital Total</span>
+                    <span class="metric-value" id="metricCapital">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">P&amp;L Cerrado Total</span>
+                    <span class="metric-value" id="metricPnl">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Rentabilidad Último Día</span>
+                    <span class="metric-value" id="metricLastDayPnl">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Rentabilidad Media / Día</span>
+                    <span class="metric-value" id="metricDailyPnl">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Win Rate</span>
+                    <span class="metric-value" id="metricWinRate">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Operaciones (Tiempo)</span>
+                    <span class="metric-value" id="metricTrades">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. Panel de Grid y Órdenes en Curso -->
+        <section class="panel">
+            <div class="panel-header">
+                <h2 class="panel-title">📊 Grid &amp; Órdenes Activas en KuCoin</h2>
+            </div>
+            
+            <div class="grid-summary">
+                <div class="grid-summary-grid">
+                    <div class="grid-item">
+                        <span class="grid-item-label">Precio Actual KAS:</span>
+                        <span class="grid-item-val" id="gridCurrentPrice">—</span>
+                    </div>
+                    <div class="grid-item">
+                        <span class="grid-item-label">Límite Inferior Grid:</span>
+                        <span class="grid-item-val" id="gridMinPrice">—</span>
+                    </div>
+                    <div class="grid-item">
+                        <span class="grid-item-label">Límite Superior Grid:</span>
+                        <span class="grid-item-val" id="gridMaxPrice">—</span>
+                    </div>
+                    <div class="grid-item">
+                        <span class="grid-item-label" id="gridStopLossLabel">🛡️ Modo Protección:</span>
+                        <span class="grid-item-val" id="gridStopLoss" style="font-weight:700;">—</span>
+                    </div>
+                    <div class="grid-item">
+                        <span class="grid-item-label">Nivel de Grid Actual:</span>
+                        <span class="grid-item-val" id="gridPositionPct">—</span>
+                    </div>
+                    <div class="grid-item">
+                        <span class="grid-item-label">🟢 Órdenes Compra:</span>
+                        <span class="grid-item-val" id="gridBuyCount" style="color:#3fb950;">—</span>
+                    </div>
+                    <div class="grid-item">
+                        <span class="grid-item-label">🔴 Órdenes Venta:</span>
+                        <span class="grid-item-val" id="gridSellCount" style="color:#f85149;">—</span>
+                    </div>
+                </div>
+                <div class="progress-track" title="Ubicación del precio dentro del rango de la rejilla">
+                    <div class="progress-fill" id="gridProgressFill" style="width: 50%;"></div>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Nivel</th>
+                            <th>Tipo</th>
+                            <th>Precio Límite (Obj.)</th>
+                            <th>% para Ejecutar</th>
+                            <th>Cantidad (KAS)</th>
+                            <th>Valor Estimado</th>
+                            <th>Margen &amp; Ganancia Estimada</th>
+                            <th>Estado Exchange</th>
+                            <th style="text-align:right;">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="activeOrdersTableBody">
+                        <tr><td colspan="9" style="text-align:center;color:#8b949e;padding:16px;">Sincronizando con KuCoin...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 4. Panel de Operaciones Realizadas y Enlazadas (Compra + Venta Asociada) -->
+        <section class="panel">
+            <div class="panel-header">
+                <h2 class="panel-title">📋 Operaciones Realizadas &amp; Enlazadas (Grid Bot)</h2>
+                <div class="tab-group">
+                    <button class="tab-btn active" data-tab="all" onclick="switchTradeTab('all')" type="button">Todas</button>
+                    <button class="tab-btn" data-tab="active" onclick="switchTradeTab('active')" type="button">Activas</button>
+                    <button class="tab-btn" data-tab="completed" onclick="switchTradeTab('completed')" type="button">Completadas</button>
+                </div>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Tipo</th>
+                            <th>P. Compra</th>
+                            <th>P. Venta</th>
+                            <th>Cantidad Real</th>
+                            <th>Total (USDT)</th>
+                            <th>Beneficio (P&L)</th>
+                            <th>Comisión</th>
+                            <th style="text-align:right;">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody id="operationsTableBody">
+                        <tr><td colspan="9" style="text-align:center;color:#8b949e;padding:16px;">Cargando operaciones reales...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Controles de Paginación (10 operaciones por página) -->
+            <div class="pagination-bar" id="operationsPagination" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid #30363d;font-size:13px;color:#8b949e;background:#0d1117;border-radius:0 0 6px 6px;">
+                <div id="operationsPageInfo">Mostrando 0 de 0 operaciones</div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <button type="button" class="btn-action-sm" id="btnPrevTradePage" onclick="changeTradePage(-1)" disabled style="cursor:not-allowed;padding:5px 12px;opacity:0.5;">◀ Anterior</button>
+                    <span id="operationsPageCounter" style="font-weight:600;color:#c9d1d9;">Página 1 de 1</span>
+                    <button type="button" class="btn-action-sm" id="btnNextTradePage" onclick="changeTradePage(1)" disabled style="cursor:not-allowed;padding:5px 12px;opacity:0.5;">Siguiente ▶</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 5. Panel de Motor de IA: Reglas Aplicadas & Aprendizaje Continuo -->
+        <section class="panel" id="rulesAndLearningSection">
+            <div class="panel-header">
+                <h2 class="panel-title">🧠 Motor de IA: Reglas Aplicadas &amp; Aprendizaje Continuo</h2>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <button type="button" id="btnToggleFollowAi" onclick="toggleFollowAi()" class="btn-action-sm" style="font-size:11px;padding:4px 10px;font-weight:600;display:flex;align-items:center;gap:5px;cursor:pointer;border-radius:6px;transition:all 0.2s ease;">
+                        <span id="followAiDot" style="width:7px;height:7px;border-radius:50%;background:#8b949e;display:inline-block;"></span>
+                        <span id="followAiText">Seguir Bot: OFF</span>
+                    </button>
+                    <span class="badge-side badge-buy" id="aiStatusBadge">IA ACTIVA</span>
+                    <span style="font-size:12px;color:#8b949e;" id="aiLastUpdate">Actualizado: —</span>
+                </div>
+            </div>
+
+            <!-- Tarjeta del Índice de Miedo y Codicia de CMC (Fiel a CoinMarketCap) -->
+            <div class="cmc-fng-card" id="cmcFngCard">
+                <div class="cmc-fng-body">
+                    <!-- Medidor Semicircular SVG Tacómetro -->
+                    <div class="cmc-gauge-container">
+                        <svg class="cmc-gauge-svg" viewBox="0 0 200 115">
+                            <defs>
+                                <linearGradient id="cmcArcGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                    <stop offset="0%" stop-color="#ea3943" />    <!-- Miedo Extremo: Rojo -->
+                                    <stop offset="25%" stop-color="#f66e3b" />   <!-- Miedo: Naranja -->
+                                    <stop offset="50%" stop-color="#f5a623" />   <!-- Neutral: Amarillo -->
+                                    <stop offset="75%" stop-color="#93c332" />   <!-- Codicia: Verde Lima -->
+                                    <stop offset="100%" stop-color="#16c784" />  <!-- Codicia Extrema: Verde Esmeralda -->
+                                </linearGradient>
+                            </defs>
+
+                            <!-- Arco Base de Fondo -->
+                            <path d="M 25 100 A 75 75 0 0 1 175 100" fill="none" stroke="#21262d" stroke-width="12" stroke-linecap="round" />
+
+                            <!-- Arco Degradado Principal -->
+                            <path id="cmcGaugeArc" d="M 25 100 A 75 75 0 0 1 175 100" fill="none" stroke="url(#cmcArcGrad)" stroke-width="12" stroke-linecap="round" />
+
+                            <!-- Indicador Circular Blanco sobre el Arco -->
+                            <circle id="cmcGaugeDot" cx="158" cy="56" r="6.5" fill="#ffffff" stroke="#0d1117" stroke-width="2.5" />
+                        </svg>
+
+                        <!-- Puntuación Central y Etiqueta -->
+                        <div class="cmc-gauge-center">
+                            <span class="cmc-score-num" id="cmcScoreNum">69</span>
+                            <span class="cmc-score-label" id="cmcScoreLabel">Codicia</span>
+                        </div>
+                    </div>
+
+                    <!-- Datos Contextuales e Históricos -->
+                    <div class="cmc-fng-historical" id="cmcHistoricalBox">
+                        <div class="cmc-hist-row">
+                            <span class="cmc-hist-label">Ayer:</span>
+                            <span class="cmc-hist-val" id="cmcHistYesterday">67 (Codicia)</span>
+                        </div>
+                        <div class="cmc-hist-row">
+                            <span class="cmc-hist-label">Semana pasada:</span>
+                            <span class="cmc-hist-val" id="cmcHistWeek">75 (Codicia)</span>
+                        </div>
+                        <div class="cmc-hist-row">
+                            <span class="cmc-hist-label">Regulación IA:</span>
+                            <span class="cmc-hist-val" style="color:#58a6ff;" id="cmcRegimeInfluence">00h, 06h, 12h, 18h</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Grid de Reglas y Políticas -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:12px;margin-bottom:16px;" id="aiRulesGrid">
+                <!-- Se rellena dinámicamente desde /api/learning/rules -->
+            </div>
+
+            <!-- Tarjeta de Recomendaciones del Día de la IA (Post-Informe Matutino) -->
+            <div id="aiDailyRecommendationCard" style="background:#161b22;border:1px solid #238636;border-radius:6px;padding:14px;margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div style="font-size:13px;font-weight:600;color:#3fb950;display:flex;align-items:center;gap:6px;">
+                        <span>💡 Recomendaciones del Día de la IA</span>
+                        <span style="font-size:10px;background:#238636;color:#ffffff;padding:2px 6px;border-radius:10px;">Post-Informe Matutino</span>
+                    </div>
+                    <span id="aiRecDate" style="font-size:11px;color:#8b949e;">Hoy</span>
+                </div>
+                <p id="aiRecRationale" style="font-size:12px;color:#c9d1d9;margin:0 0 10px 0;line-height:1.4;"></p>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:12px;">
+                    <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;">
+                        <div style="font-size:11px;font-weight:600;color:#3fb950;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+                            <span>✅ Qué Hacer Hoy</span>
+                        </div>
+                        <ul id="aiRecActionsList" style="margin:0;padding-left:18px;font-size:11px;color:#c9d1d9;display:flex;flex-direction:column;gap:4px;">
+                            <li>Cargando recomendaciones operativas...</li>
+                        </ul>
+                    </div>
+                    <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;">
+                        <div style="font-size:11px;font-weight:600;color:#f85149;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+                            <span>⚠️ Cosas a Evitar</span>
+                        </div>
+                        <ul id="aiRecAvoidsList" style="margin:0;padding-left:18px;font-size:11px;color:#c9d1d9;display:flex;flex-direction:column;gap:4px;">
+                            <li>Cargando directivas de protección...</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Registro de Lecciones y Optimizaciones con Base de Datos -->
+            <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:14px;">
+                <div style="font-size:13px;font-weight:600;color:#c9d1d9;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span>📝 Registro de Lecciones y Errores Aprendidos por IA (Base de Datos)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <select id="aiLessonsCategoryFilter" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;font-size:11px;padding:3px 8px;border-radius:4px;outline:none;cursor:pointer;">
+                            <option value="todas">Todas las categorías</option>
+                            <option value="estrategia_rentable">Estrategias a Seguir</option>
+                            <option value="cosa_a_evitar">Cosas a Evitar</option>
+                            <option value="macro_sentimiento">Sentimiento & Macro</option>
+                            <option value="optimizacion_fees">Optimización de Fees</option>
+                        </select>
+                        <span style="font-size:11px;color:#58a6ff;">SQLite DB</span>
+                    </div>
+                </div>
+                <div id="aiLessonsList" style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+                    <!-- Se rellena dinámicamente -->
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- MODAL DE CONFIGURACIÓN SEGURA DE CREDENCIALES KUCOIN -->
+    <div class="modal-overlay" id="configModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3 class="modal-title">⚙️ Configuración API KuCoin</h3>
+                <button class="modal-close-btn" id="btnCloseConfig" type="button">&times;</button>
+            </div>
+            
+            <p style="font-size:12px;color:#8b949e;margin-bottom:14px;line-height:1.4;">
+                Introduce tus credenciales de KuCoin. Se guardarán en el archivo protegido del servidor (permisos 0600) y el Grid Bot se reiniciará de forma automática.
+            </p>
+
+            <div id="currentKeyHelp" style="font-size:11px;color:#58a6ff;margin-bottom:14px;font-family:monospace;">
+                Consultando clave actual en el servidor...
+            </div>
+
+            <div class="form-group">
+                <label for="cfgApiKey">API Key KuCoin</label>
+                <input type="text" id="cfgApiKey" placeholder="Introduce tu API Key" autocomplete="off">
+            </div>
+
+            <div class="form-group">
+                <label for="cfgApiSecret">API Secret KuCoin</label>
+                <input type="password" id="cfgApiSecret" placeholder="Introduce tu API Secret" autocomplete="off">
+            </div>
+
+            <div class="form-group">
+                <label for="cfgApiPassphrase">API Passphrase KuCoin</label>
+                <input type="password" id="cfgApiPassphrase" placeholder="Introduce tu Passphrase" autocomplete="off">
+            </div>
+
+            <div id="modalStatusMsg" class="modal-status"></div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn-cancel" id="btnCancelConfig">Cancelar</button>
+                <button type="button" class="btn-save" id="btnSaveConfig">Guardar y Reiniciar Bot</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE CONFIGURACIÓN Y ESTRATEGIAS GRID BOT -->
+    <div class="modal-overlay" id="gridBotModal">
+        <div class="modal-box modal-box-lg">
+            <div class="modal-header">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div class="bot-picon-wrapper" style="width:28px;height:28px;">
+                        <svg class="bot-picon-svg" style="width:18px;height:18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                            <circle cx="12" cy="5" r="2"></circle>
+                            <path d="M12 7v4"></path>
+                            <circle cx="8.5" cy="15.5" r="1.2" fill="#58a6ff" stroke="none"></circle>
+                            <circle cx="15.5" cy="15.5" r="1.2" fill="#58a6ff" stroke="none"></circle>
+                            <path d="M9 18.5h6"></path>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="modal-title" style="margin:0;font-size:16px;">Configuración y Estrategia del Grid Bot</h3>
+                        <span style="font-size:11px;color:#8b949e;">Ajusta los parámetros operativos, rangos de precio y gestión de capital</span>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span id="botStatusBadge" class="badge-side badge-buy">🟢 BOT OPERANDO</span>
+                    <button class="modal-close-btn" id="btnCloseGridBot" type="button">&times;</button>
+                </div>
+            </div>
+
+            <!-- SECCIÓN 1: Control de Estado y Acciones Rápidas -->
+            <div class="modal-section-card">
+                <div class="modal-section-header">
+                    <span class="modal-section-title">⚡ Control Operativo Inmediato</span>
+                    <span style="font-size:11px;color:#8b949e;">Acciones manuales de sincronización</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <button class="btn-action-sm" id="btnToggleBot" onclick="toggleBotState()" type="button" title="Pausar o reanudar el ciclo de trading">
+                        ⏸️ Pausar Bot
+                    </button>
+                    <button class="btn-action-sm" onclick="rebalanceGrid()" type="button" title="Cancela órdenes viejas y coloca compras frescas con el capital asignado">
+                        🔄 Rebalancear Rejilla
+                    </button>
+                    <button class="btn-action-sm" onclick="syncOrphanSells()" type="button" title="Detecta KAS libres en cartera y les coloca orden de venta con ganancia">
+                        🎯 Sincronizar Ventas
+                    </button>
+                </div>
+            </div>
+
+            <!-- SECCIÓN 2: Presets Rápidos de Estrategia -->
+            <div class="modal-section-card">
+                <div class="modal-section-header">
+                    <span class="modal-section-title">🎯 Perfil de Estrategia Recomendado</span>
+                    <span style="font-size:11px;color:#58a6ff;">Selecciona una plantilla o personaliza</span>
+                </div>
+                <p class="modal-section-desc">
+                    Elige un perfil predefinido según el tipo de mercado o edita los valores inferiores a tu medida:
+                </p>
+                <div class="preset-btn-group">
+                    <button type="button" class="preset-btn" id="presetConservador" onclick="applyPreset('conservador')">
+                        🛡️ Conservadora (1.8% Spacing)
+                    </button>
+                    <button type="button" class="preset-btn active" id="presetEquilibrado" onclick="applyPreset('equilibrado')">
+                        ⚖️ Equilibrada (1.35% Spacing)
+                    </button>
+                    <button type="button" class="preset-btn" id="presetScalping" onclick="applyPreset('scalping')">
+                        ⚡ Scalping Rápido (0.95% Spacing)
+                    </button>
+                    <button type="button" class="preset-btn" id="presetPersonalizado" onclick="applyPreset('personalizado')">
+                        🛠️ Personalizada
+                    </button>
+                </div>
+            </div>
+
+            <!-- SECCIÓN 3: Parámetros Técnicos de la Cuadrícula -->
+            <div class="modal-section-card">
+                <div class="modal-section-header">
+                    <span class="modal-section-title">📊 Parámetros de la Cuadrícula y Capital</span>
+                    <span style="font-size:11px;color:#3fb950;">Límites estrictos en KuCoin</span>
+                </div>
+
+                <div class="strategy-form-grid" style="padding:0;background:transparent;border:none;">
+                    <div class="strategy-field">
+                        <label>Par de Trading</label>
+                        <select id="stratSymbol" class="strategy-select" onchange="onStrategySymbolChange()">
+                            <option value="KAS/USDT">KAS/USDT (Kaspa)</option>
+                            <option value="BTC/USDT">BTC/USDT (Bitcoin)</option>
+                            <option value="ETH/USDT">ETH/USDT (Ethereum)</option>
+                            <option value="SOL/USDT">SOL/USDT (Solana)</option>
+                            <option value="XRP/USDT">XRP/USDT (Ripple)</option>
+                            <option value="ADA/USDT">ADA/USDT (Cardano)</option>
+                            <option value="DOGE/USDT">DOGE/USDT (Dogecoin)</option>
+                            <option value="DOT/USDT">DOT/USDT (Polkadot)</option>
+                            <option value="LTC/USDT">LTC/USDT (Litecoin)</option>
+                            <option value="LINK/USDT">LINK/USDT (Chainlink)</option>
+                        </select>
+                        <span class="field-desc">Mercado spot activo a operar.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>Límite Inferior (Grid Min)</label>
+                        <input type="number" id="stratGridMin" step="0.00001" placeholder="Ej: 0.03300">
+                        <span class="field-desc">Precio suelo donde termina la cuadrícula.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>Límite Superior (Grid Max)</label>
+                        <input type="number" id="stratGridMax" step="0.00001" placeholder="Ej: 0.04100">
+                        <span class="field-desc">Precio techo objetivo de toma de ganancias.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>Margen / Spacing (%)</label>
+                        <input type="number" id="stratSpacing" step="0.05" min="0.5" max="15" placeholder="Ej: 1.35">
+                        <span class="field-desc">Ganancia neta esperada por cada ciclo.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>Niveles de Cuadrícula</label>
+                        <input type="number" id="stratLevels" min="4" max="24" step="1" placeholder="Ej: 8">
+                        <span class="field-desc">Cantidad total de escalones de orden.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>Capital Asignado (USDT)</label>
+                        <input type="number" id="stratCapital" min="5" step="1" placeholder="Ej: 16.00">
+                        <span class="field-desc">Tope máximo de saldo que el bot usará.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>🛡️ Precio Stop-Loss</label>
+                        <input type="number" id="stratStopLoss" step="0.00001" placeholder="Ej: 0.03153">
+                        <span class="field-desc">Nivel crítico de protección ante caídas.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>Modo Stop-Loss</label>
+                        <select id="stratStopLossMode" class="strategy-select">
+                            <option value="hold">🛡️ Hold &amp; Rebound (No malvender en spot)</option>
+                            <option value="market_sell">⚡ Venta a Mercado (Corte total de pérdida)</option>
+                        </select>
+                        <span class="field-desc">Comportamiento al perforar el Stop-Loss.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>🚀 Trailing Grid (Auto-Ajuste)</label>
+                        <select id="stratTrailingGrid" class="strategy-select">
+                            <option value="true" selected>⚡ Activado (Sigue subidas automáticamente)</option>
+                            <option value="false">🔒 Desactivado (Rango fijo estático)</option>
+                        </select>
+                        <span class="field-desc">Mueve la rejilla hacia arriba si el precio sube.</span>
+                    </div>
+
+                    <!-- Tarjeta Didáctica Interactiva: Desglose de Niveles y Distribución -->
+                    <div class="levels-explainer-card" style="grid-column: 1 / -1;">
+                        <div class="levels-explainer-header">
+                            <span style="font-weight:700;color:#58a6ff;display:flex;align-items:center;gap:6px;">
+                                📐 Desglose Didáctico de la Cuadrícula (<span id="expLevelsCount">8</span> Niveles)
+                            </span>
+                            <span id="expKucoinBadge" class="badge-side badge-buy">✅ Cumple Mínimo KuCoin</span>
+                        </div>
+                        <div class="levels-explainer-grid">
+                            <div class="levels-stat-box">
+                                <span class="levels-stat-label">Inversión por Orden</span>
+                                <span class="levels-stat-val" id="expPerOrderVal">~$2.00 USDT</span>
+                                <span class="levels-stat-sub">Capital / Niveles (Mínimo: $1.00)</span>
+                            </div>
+                            <div class="levels-stat-box">
+                                <span class="levels-stat-label">Órdenes de Compra</span>
+                                <span class="levels-stat-val" id="expBuyLevelsVal" style="color:#3fb950;">~4 Compras</span>
+                                <span class="levels-stat-sub">Bajo el precio actual (Esperando caídas)</span>
+                            </div>
+                            <div class="levels-stat-box">
+                                <span class="levels-stat-label">Órdenes de Venta</span>
+                                <span class="levels-stat-val" id="expSellLevelsVal" style="color:#f85149;">~4 Ventas</span>
+                                <span class="levels-stat-sub">Sobre el precio actual (Se activan con saldo)</span>
+                            </div>
+                        </div>
+                        <p class="levels-explainer-note">
+                            💡 <strong>¿Cómo funciona?</strong> La cuadrícula divide el rango entre el suelo y el techo en <span id="expTotalSteps">8</span> peldaños. El bot coloca órdenes de compra escalonadas en los niveles inferiores y, a medida que se van ejecutando y obtienes monedas, coloca las órdenes de venta en los niveles superiores con el % de ganancia configurado.
+                        </p>
+                    </div>
+
+                    <div class="strategy-field" style="grid-column: 1 / -1; margin-top: 6px;">
+                        <button class="btn-save-strat" id="btnSaveStrategy" onclick="saveStrategyConfig()" type="button" style="width:100%;height:42px;font-size:14px;">
+                            💾 Guardar Estrategia y Aplicar en KuCoin
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="strategyStatusMsg" class="modal-status" style="margin-top:10px;"></div>
+
+            <div class="modal-actions" style="margin-top:16px;">
+                <button type="button" class="btn-cancel" id="btnCancelGridBot">Cerrar Ventana</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Módulos de Soporte del Dashboard ERP -->
+    <script src="/static/dashboard_tradingview.js?v=10.1"></script>
+    <script src="/static/dashboard_modals.js?v=10.1"></script>
+    <!-- Script Principal del Dashboard -->
+    <script src="/static/dashboard.js?v=10.2"></script>
+</body>
+</html>
