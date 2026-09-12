@@ -8,14 +8,16 @@ async function fetchLivePrice() {
         if (data && data.current_price) {
             currentLivePrice = data.current_price;
             const price = data.current_price;
-            const priceEl = document.getElementById('headerPrice');
-            const changeEl = document.getElementById('headerChange');
+            const priceEl = document.getElementById('headerPrice'), changeEl = document.getElementById('headerChange');
             if (priceEl) priceEl.textContent = formatCurrency(price, 5);
             if (changeEl && data.stats) {
                 const change = data.stats.change_pct_72h || 0;
                 changeEl.textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
                 changeEl.className = 'price-change ' + (change >= 0 ? 'positive' : 'negative');
             }
+            const curPriceEl = document.getElementById('gridCurrentPrice');
+            if (curPriceEl) curPriceEl.textContent = formatCurrency(price, 5);
+            if (cachedOpenOrders && cachedOpenOrders.length > 0) renderActiveOrdersTable(cachedOpenOrders, price);
         }
     } catch (e) {
         console.warn('Aviso en actualización de precio en vivo:', e);
@@ -462,76 +464,83 @@ async function loadActiveOrders() {
 
         const posPctEl = document.getElementById('gridPositionPct');
         if (posPctEl) posPctEl.textContent = (stats.grid_position_pct || 0).toFixed(1) + '%';
-        const buyCountEl = document.getElementById('gridBuyCount');
+        const buyCountEl = document.getElementById('gridBuyCount'), sellCountEl = document.getElementById('gridSellCount');
         if (buyCountEl) buyCountEl.textContent = stats.total_buy_orders || buys.length;
-        const sellCountEl = document.getElementById('gridSellCount');
         if (sellCountEl) sellCountEl.textContent = stats.total_sell_orders || sells.length;
-
         const barFill = document.getElementById('gridProgressFill');
         if (barFill) barFill.style.width = Math.max(0, Math.min(100, stats.grid_position_pct || 50)) + '%';
-
-        const tbody = document.getElementById('activeOrdersTableBody');
-        if (tbody) {
-            if (orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e;padding:16px;">No hay órdenes activas actualmente en KuCoin.</td></tr>';
-            } else {
-                const currentPrice = parseFloat(data.current_price) || currentLivePrice || 0;
-                tbody.innerHTML = orders.map((o, idx) => {
-                    const isBuy = (o.type === 'compra');
-                    const sideBadge = isBuy ? '<span class="badge-side badge-buy">COMPRA</span>' : '<span class="badge-side badge-sell">VENTA</span>';
-                    const cancelBtnHtml = o.id ? `<button class="btn-cancel-order" onclick="triggerCancelOrder('${o.id}', '${o.type}', ${o.price}, ${o.quantity})" type="button">✕ Quitar</button>` : '—';
-                    
-                    let diffHtml = '<span style="color:#8b949e;">—</span>';
-                    if (currentPrice > 0 && o.price > 0) {
-                        const diffPct = ((o.price - currentPrice) / currentPrice) * 100;
-                        const sign = diffPct >= 0 ? '+' : '';
-                        const color = isBuy ? '#3fb950' : '#f85149';
-                        const actionDesc = isBuy ? `caída del ${Math.abs(diffPct).toFixed(2)}%` : `subida del ${Math.abs(diffPct).toFixed(2)}%`;
-                        diffHtml = `<span style="font-weight:700;font-family:'SF Mono',Consolas,monospace;color:${color};" title="Falta una ${actionDesc} desde el precio actual (${formatCurrency(currentPrice, 5)}) para ejecutarse en KuCoin">${sign}${diffPct.toFixed(2)}%</span>`;
-                    }
-
-                    // Renderizado de Margen y Ganancia Estimada para órdenes de venta
-                    let profitHtml = '<span style="color:#8b949e;font-size:11px;">Pendiente de ejecución</span>';
-                    if (!isBuy) {
-                        if (o.spacing_pct !== null && o.spacing_pct !== undefined && o.est_net_pnl !== null && o.est_net_pnl !== undefined) {
-                            const originPriceStr = o.origin_buy_price ? `$${parseFloat(o.origin_buy_price).toFixed(5)}` : 'Compra previa';
-                            const pnlSign = o.est_net_pnl >= 0 ? '+' : '';
-                            const pnlColor = o.est_net_pnl >= 0 ? '#3fb950' : '#f85149';
-                            profitHtml = `
-                                <div style="display:flex;flex-direction:column;gap:2px;">
-                                    <div style="display:flex;align-items:center;gap:6px;">
-                                        <span style="font-weight:700;color:#58a6ff;background:rgba(88,166,255,0.12);padding:1px 5px;border-radius:3px;font-size:11px;" title="Margen programado sobre la compra de ${originPriceStr}">+${o.spacing_pct.toFixed(2)}%</span>
-                                        <span style="font-weight:700;color:${pnlColor};font-size:12px;" title="Ganancia neta estimada tras comisiones de compra y venta (0.2%)">${pnlSign}$${o.est_net_pnl.toFixed(4)} <span style="font-size:10px;opacity:0.85;">(${pnlSign}${o.est_pnl_pct.toFixed(2)}%)</span></span>
-                                    </div>
-                                    <span style="font-size:10px;color:#8b949e;" title="Precio de compra de origen al que se adquirió este lote">Origen compra: ${originPriceStr}</span>
-                                </div>`;
-                        } else {
-                            profitHtml = `<span style="color:#58a6ff;font-weight:600;font-size:11px;">+${currentGridSpacing.toFixed(2)}%</span>`;
-                        }
-                    } else {
-                        // Para compras: indicar el objetivo de venta que se activará cuando se ejecute
-                        const targetSellPrice = o.price * (1.0 + (currentGridSpacing / 100.0));
-                        profitHtml = `<span style="color:#8b949e;font-size:11px;" title="Al ejecutarse la compra, colocará venta inmediata a este precio">Venta obj: <strong style="color:#c9d1d9;">${formatCurrency(targetSellPrice, 5)}</strong> (+${currentGridSpacing.toFixed(2)}%)</span>`;
-                    }
-
-                    return `
-                        <tr>
-                            <td style="color:#8b949e;">#${idx + 1}</td>
-                            <td>${sideBadge}</td>
-                            <td style="font-weight:700;color:${isBuy ? '#3fb950' : '#f85149'};">${formatCurrency(o.price, 5)}</td>
-                            <td>${diffHtml}</td>
-                            <td>${parseFloat(o.quantity).toFixed(2)}</td>
-                            <td>$${parseFloat(o.value_usdt).toFixed(2)}</td>
-                            <td>${profitHtml}</td>
-                            <td><span class="badge-side badge-done">ACTIVA EN EXCHANGE</span></td>
-                            <td style="text-align:right;">${cancelBtnHtml}</td>
-                        </tr>`;
-                }).join('');
-            }
-        }
+        renderActiveOrdersTable(orders, data.current_price);
     } catch (err) {
         console.error('Error al cargar órdenes activas:', err);
     }
+}
+
+/**
+ * Función: renderActiveOrdersTable - Renderiza la tabla de órdenes activas ordenadas dinámicamente por proximidad al precio actual.
+ */
+function renderActiveOrdersTable(orders, currentPrice) {
+    const tbody = document.getElementById('activeOrdersTableBody');
+    if (!tbody) return;
+    if (!orders || orders.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e;padding:16px;">No hay órdenes activas actualmente en KuCoin.</td></tr>';
+        return;
+    }
+    const cPrice = parseFloat(currentPrice) || currentLivePrice || 0;
+    // Ordenar dinámicamente por proximidad de ejecución: la más cercana arriba (menor distancia) y la más lejana abajo
+    const sortedOrders = [...orders].sort((a, b) => {
+        const pA = parseFloat(a.price) || 0, pB = parseFloat(b.price) || 0;
+        return cPrice > 0 ? (Math.abs(pA - cPrice) - Math.abs(pB - cPrice)) : (pB - pA);
+    });
+
+    tbody.innerHTML = sortedOrders.map((o, idx) => {
+        const isBuy = (o.type === 'compra');
+        const sideBadge = isBuy ? '<span class="badge-side badge-buy">COMPRA</span>' : '<span class="badge-side badge-sell">VENTA</span>';
+        const cancelBtnHtml = o.id ? `<button class="btn-cancel-order" onclick="triggerCancelOrder('${o.id}', '${o.type}', ${o.price}, ${o.quantity})" type="button">✕ Quitar</button>` : '—';
+        
+        let diffHtml = '<span style="color:#8b949e;">—</span>';
+        if (cPrice > 0 && o.price > 0) {
+            const diffPct = ((o.price - cPrice) / cPrice) * 100;
+            const sign = diffPct >= 0 ? '+' : '';
+            const color = isBuy ? '#3fb950' : '#f85149';
+            const actionDesc = isBuy ? `caída del ${Math.abs(diffPct).toFixed(2)}%` : `subida del ${Math.abs(diffPct).toFixed(2)}%`;
+            diffHtml = `<span style="font-weight:700;font-family:'SF Mono',Consolas,monospace;color:${color};" title="Falta una ${actionDesc} desde el precio actual (${formatCurrency(cPrice, 5)}) para ejecutarse en KuCoin">${sign}${diffPct.toFixed(2)}%</span>`;
+        }
+
+        let profitHtml = '<span style="color:#8b949e;font-size:11px;">Pendiente de ejecución</span>';
+        if (!isBuy) {
+            if (o.spacing_pct !== null && o.spacing_pct !== undefined && o.est_net_pnl !== null && o.est_net_pnl !== undefined) {
+                const originPriceStr = o.origin_buy_price ? `$${parseFloat(o.origin_buy_price).toFixed(5)}` : 'Compra previa';
+                const pnlSign = o.est_net_pnl >= 0 ? '+' : '';
+                const pnlColor = o.est_net_pnl >= 0 ? '#3fb950' : '#f85149';
+                profitHtml = `
+                    <div style="display:flex;flex-direction:column;gap:2px;">
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span style="font-weight:700;color:#58a6ff;background:rgba(88,166,255,0.12);padding:1px 5px;border-radius:3px;font-size:11px;" title="Margen programado sobre la compra de ${originPriceStr}">+${o.spacing_pct.toFixed(2)}%</span>
+                            <span style="font-weight:700;color:${pnlColor};font-size:12px;" title="Ganancia neta estimada tras comisiones de compra y venta (0.2%)">${pnlSign}$${o.est_net_pnl.toFixed(4)} <span style="font-size:10px;opacity:0.85;">(${pnlSign}${o.est_pnl_pct.toFixed(2)}%)</span></span>
+                        </div>
+                        <span style="font-size:10px;color:#8b949e;" title="Precio de compra de origen al que se adquirió este lote">Origen compra: ${originPriceStr}</span>
+                    </div>`;
+            } else {
+                profitHtml = `<span style="color:#58a6ff;font-weight:600;font-size:11px;">+${currentGridSpacing.toFixed(2)}%</span>`;
+            }
+        } else {
+            const targetSellPrice = o.price * (1.0 + (currentGridSpacing / 100.0));
+            profitHtml = `<span style="color:#8b949e;font-size:11px;" title="Al ejecutarse la compra, colocará venta inmediata a este precio">Venta obj: <strong style="color:#c9d1d9;">${formatCurrency(targetSellPrice, 5)}</strong> (+${currentGridSpacing.toFixed(2)}%)</span>`;
+        }
+
+        return `
+            <tr>
+                <td style="color:#8b949e;">#${idx + 1}</td>
+                <td>${sideBadge}</td>
+                <td style="font-weight:700;color:${isBuy ? '#3fb950' : '#f85149'};">${formatCurrency(o.price, 5)}</td>
+                <td>${diffHtml}</td>
+                <td>${parseFloat(o.quantity).toFixed(2)}</td>
+                <td>$${parseFloat(o.value_usdt).toFixed(2)}</td>
+                <td>${profitHtml}</td>
+                <td><span class="badge-side badge-done">ACTIVA EN EXCHANGE</span></td>
+                <td style="text-align:right;">${cancelBtnHtml}</td>
+            </tr>`;
+    }).join('');
 }
 
 /**
@@ -547,15 +556,9 @@ async function loadStrategyConfig() {
         const data = await resp.json();
         if (!data) return;
 
-        // Cargar par y campos de configuración limpios
-        if (data.symbol && document.getElementById('stratSymbol')) {
-            document.getElementById('stratSymbol').value = data.symbol;
-        }
-        const minVal = parseFloat(data.grid_min || 0.033);
-        const maxVal = parseFloat(data.grid_max || 0.041);
-        const dec = (minVal < 1.0) ? 5 : ((minVal > 50) ? 2 : 4);
-
-        const slVal = data.stop_loss_price || (minVal * 0.95);
+        const minVal = parseFloat(data.grid_min || 0.033), maxVal = parseFloat(data.grid_max || 0.041);
+        const dec = (minVal < 1.0) ? 5 : ((minVal > 50) ? 2 : 4), slVal = data.stop_loss_price || (minVal * 0.95);
+        if (document.getElementById('stratSymbol') && data.symbol) document.getElementById('stratSymbol').value = data.symbol;
         if (document.getElementById('stratGridMin')) document.getElementById('stratGridMin').value = minVal.toFixed(dec);
         if (document.getElementById('stratGridMax')) document.getElementById('stratGridMax').value = maxVal.toFixed(dec);
         if (document.getElementById('stratSpacing')) document.getElementById('stratSpacing').value = data.spacing || 1.35;

@@ -1,4 +1,4 @@
-# Credenciales y Secretos
+# Seguridad Máxima - Evitar fuga de credenciales y secretos
 .env
 *.env
 *.key
@@ -6,23 +6,23 @@
 id_rsa*
 secrets.json
 
-# Entornos virtuales
+# Entornos virtuales de Python
 venv/
 .venv/
 env/
 __pycache__/
 *.py[cod]
+*.class
 
-# Bases de datos y logs operativos
+# Logs y bases de datos dinámicas con transacciones privadas
 *.log
 *.sqlite
 *.sqlite3
 *.db
-data/
 logs/
 *.jsonl
 
-# Archivos de datos del exchange
+# Archivos de datos operacionales del exchange (KuCoin)
 trades.json
 open_orders.json
 metrics.json
@@ -34,8 +34,9 @@ last_update.json
 price_cache.json
 learning_memory.json
 
-# Sistema operativo
+# Archivos de sistema operativo y editores
 .DS_Store
 Thumbs.db
-.vscode/
 .idea/
+.vscode/
+*.swp

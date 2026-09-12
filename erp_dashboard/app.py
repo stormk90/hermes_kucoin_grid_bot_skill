@@ -1,5 +1,3 @@
-import sys, os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'core')))
 """
 ERP Web Grid Bot v4.0 — Velas coherentes + Precios formateados + Trades desde grid
 """
@@ -18,16 +16,14 @@ import requests
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
 # === Rutas de archivos ===
-DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data'))
-os.makedirs(DATA_DIR, exist_ok=True)
-LOGS_DIR = DATA_DIR
+LOGS_DIR = '/home/stormk90/workspace/logs'
 METRICS_FILE = os.path.join(LOGS_DIR, 'metrics.json')
 TRADES_FILE = os.path.join(LOGS_DIR, 'trades.json')
 GRID_CONFIG = os.path.join(LOGS_DIR, 'grid_config.json')
 OPEN_ORDERS_FILE = os.path.join(LOGS_DIR, 'open_orders.json')
-MEMORY_FILE = os.path.join(DATA_DIR, 'learning_memory.json')
-LEARNING_LOG = os.path.join(DATA_DIR, 'learning_log.jsonl')
-PRICE_CACHE = os.path.join(DATA_DIR, 'price_cache.json')
+MEMORY_FILE = '/home/stormk90/workspace/grid_bot_erp/learning_memory.json'
+LEARNING_LOG = '/home/stormk90/workspace/grid_bot_erp/learning_log.jsonl'
+PRICE_CACHE = '/home/stormk90/workspace/grid_bot_erp/price_cache.json'
 SENTIMENT_FILE = os.path.join(LOGS_DIR, 'market_sentiment.json')
 ANALYSIS_FILE = os.path.join(LOGS_DIR, 'analysis.json')
 
@@ -524,20 +520,15 @@ def api_price_batch():
 
 @app.route('/api/orders/active')
 def api_orders_active():
-    """
-    Ordenes reales del Grid Bot directamente sincronizadas con KuCoin.
-    """
+    """Función: api_orders_active - Órdenes reales de KuCoin ordenadas por proximidad de ejecución."""
     raw_orders = load_json(OPEN_ORDERS_FILE, [])
     grid_config = load_json(GRID_CONFIG, {})
     metrics = load_json(METRICS_FILE, {})
-    analysis = metrics.get('analysis', {})
-    
-    current_price = analysis.get('current_price', 0)
-    if current_price <= 0:
-        kd = get_crypto_price_single('kaspa')
-        if kd:
-            current_price = kd.get('usd', 0)
-            
+    current_price = metrics.get('analysis', {}).get('current_price', 0) or (get_crypto_price_single('kaspa') or {}).get('usd', 0)
+    if current_price <= 0 and raw_orders:
+        bp = [float(o['price']) for o in raw_orders if o.get('side') == 'buy' and float(o.get('price', 0)) > 0]
+        sp = [float(o['price']) for o in raw_orders if o.get('side') == 'sell' and float(o.get('price', 0)) > 0]
+        current_price = round((max(bp) + min(sp)) / 2, 5) if (bp and sp) else (round(max(bp) * 1.01, 5) if bp else 0.0355)
     grid_min = grid_config.get('grid_min', 0.033)
     grid_max = grid_config.get('grid_max', 0.041)
     grid_levels = grid_config.get('num_levels', 8)
@@ -609,7 +600,13 @@ def api_orders_active():
         else:
             sell_orders.append(entry)
         orders.append(entry)
-        
+
+    # Ordenar dinámicamente por proximidad de ejecución: la más cercana arriba y la más lejana abajo
+    if current_price > 0:
+        orders.sort(key=lambda x: abs(float(x.get('price', 0)) - current_price))
+        for idx, o in enumerate(orders):
+            o['level'] = idx + 1
+
     stop_loss_mult = float(grid_config.get('stop_loss_multiple', 0.95))
     stop_loss_price = round(grid_min * stop_loss_mult, 5)
     stop_loss_pct = round((1.0 - stop_loss_mult) * 100, 1)
@@ -696,7 +693,7 @@ def api_refresh():
     return jsonify({'status': 'no_change', 'price': live_price.get('usd', 0) if live_price else None})
 
 # API GESTION DE CONFIGURACION Y CREDENCIALES (KUCOIN)
-ENV_FILE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.env'))
+ENV_FILE_PATH = "/home/stormk90/workspace/grid_bot/.env"
 
 @app.route('/api/config/keys', methods=['GET', 'POST'])
 def api_config_keys():
@@ -849,7 +846,7 @@ def api_grid_sync_orphans():
                  limite correspondiente si faltaba en KuCoin.
     """
     try:
-        cmd = "import sys; sys.path.append('c:\Users\storm\Downloads\ProyectoIA\hermes_grid_bot_skill\core'); from grid_bot import GridBot; b = GridBot(); ticker = b.exchange.fetch_ticker('KAS/USDT'); b.reconcile_orphan_inventory(ticker['last'])"
+        cmd = "import sys; sys.path.append('/home/stormk90/workspace/grid_bot'); from grid_bot import GridBot; b = GridBot(); ticker = b.exchange.fetch_ticker('KAS/USDT'); b.reconcile_orphan_inventory(ticker['last'])"
         subprocess.run(["python3", "-c", cmd], timeout=30, check=False)
         return jsonify({'success': True, 'message': 'Reconciliacion de inventario completada.'})
     except Exception as e:
@@ -893,7 +890,7 @@ def api_market_sell():
         return jsonify({'success': False, 'error': 'Cantidad a vender inválida'}), 400
 
     try:
-        sys.path.append('c:\Users\storm\Downloads\ProyectoIA\hermes_grid_bot_skill\core')
+        sys.path.append('/home/stormk90/workspace/grid_bot')
         import ccxt
         from config import KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE
         ex = ccxt.kucoin({

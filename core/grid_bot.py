@@ -12,7 +12,11 @@ import time
 import sys
 import os
 from datetime import datetime
-from market_analyzer import analyze_market, save_analysis
+try:
+    from market_analyzer import analyze_market, save_analysis
+except ImportError:
+    analyze_market = None
+    save_analysis = None
 from config import (
     KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE,
     SYMBOL, CAPITAL, GRID_SPACING_PCT, NUM_LEVELS, FEE_RATE,
@@ -95,64 +99,56 @@ class GridBot:
     def get_pending_buy_inventory(self):
         """
         Función: get_pending_buy_inventory
-        Calcula los lotes de compra reales que no han sido cerrados por ventas,
-        imputando cada venta a la compra cuyo precio objetivo (precio * spacing) coincide.
+        Calcula los lotes de compra reales pendientes de vender.
+        Garantiza que el total de la moneda base en inventario coincida estrictamente
+        con el saldo físico real disponible en el exchange (asignación 1:1 por lote íntegro, sin dilución ni órdenes fantasma).
         """
         try:
             self.load_trades()
-            inventory = []
-            spacing_mult = 1.0 + (self.spacing / 100.0)
+            base_curr, quote_curr = self.get_base_quote()
+            bal = self.exchange.fetch_balance()
+            total_base = float(bal.get('total', {}).get(base_curr, 0))
+            if total_base <= 0.5:
+                return []
 
-            for t in self.trades:
-                if t.get('symbol') != self.symbol:
+            # Recorrer compras recientes desde la más nueva hacia atrás para emparejar con el saldo físico
+            recent_buys = []
+            for t in reversed(self.trades):
+                if t.get('symbol') != self.symbol or t.get('side') != 'buy':
                     continue
-                side = t.get('side')
-                price = float(t.get('price', 0))
-                amt = float(t.get('amount', 0))
+                recent_buys.append({
+                    'id': t.get('id'),
+                    'price': float(t.get('price', 0)),
+                    'remaining': float(t.get('amount', 0)),
+                    'amount': float(t.get('amount', 0)),
+                    'timestamp': t.get('timestamp')
+                })
 
-                if side == 'buy':
-                    inventory.append({
-                        'id': t.get('id'),
-                        'price': price,
-                        'remaining': amt,
-                        'amount': amt,
-                        'timestamp': t.get('timestamp')
-                    })
-                elif side == 'sell':
-                    sell_qty = amt
-                    while sell_qty > 0.001:
-                        best_idx = -1
-                        best_diff = float('inf')
-                        for i, inv in enumerate(inventory):
-                            if inv['remaining'] > 0.001 and inv['price'] < price:
-                                target_sell = inv['price'] * spacing_mult
-                                diff = abs(price - target_sell)
-                                if diff < best_diff:
-                                    best_diff = diff
-                                    best_idx = i
+            # Agrupar compras al mismo nivel de precio (ej. parciales consecutivos)
+            allocated = 0.0
+            matched_inventory = []
 
-                        if best_idx == -1:
-                            for i, inv in enumerate(inventory):
-                                if inv['remaining'] > 0.001 and inv['price'] < price:
-                                    diff = price - inv['price']
-                                    if diff < best_diff:
-                                        best_diff = diff
-                                        best_idx = i
+            for b in recent_buys:
+                if allocated >= total_base - 0.5:
+                    break
+                needed = total_base - allocated
+                take = min(b['remaining'], needed)
+                if take > 0.1:
+                    existing = next((inv for inv in matched_inventory if abs(inv['price'] - b['price']) / b['price'] < 0.0005), None)
+                    if existing:
+                        existing['remaining'] += take
+                        existing['amount'] += take
+                    else:
+                        matched_inventory.append({
+                            'id': b['id'],
+                            'price': b['price'],
+                            'remaining': take,
+                            'amount': take,
+                            'timestamp': b['timestamp']
+                        })
+                    allocated += take
 
-                        if best_idx == -1:
-                            for i, inv in enumerate(inventory):
-                                if inv['remaining'] > 0.001:
-                                    best_idx = i
-                                    break
-
-                        if best_idx == -1:
-                            break
-
-                        take = min(inventory[best_idx]['remaining'], sell_qty)
-                        inventory[best_idx]['remaining'] -= take
-                        sell_qty -= take
-
-            return [inv for inv in inventory if inv['remaining'] > 0.01]
+            return matched_inventory
         except Exception as e:
             print(f"Error calculando inventario de compras: {e}")
             return []
@@ -399,7 +395,7 @@ class GridBot:
             accum_kas = 0.0
 
             for pb in pending_buys:
-                kas_lot = pb['remaining'] * 0.998
+                kas_lot = pb['remaining']
                 target_p = round(pb['price'] * spacing_mult, decimals)
                 val = kas_lot * target_p
                 if val < 1.0:
@@ -413,20 +409,26 @@ class GridBot:
             if accum_kas > 0 and orders_to_place:
                 orders_to_place[-1]['amount'] += accum_kas
 
-            # Controlar que la suma total no exceda el saldo libre disponible
-            total_sell_kas = sum(o['amount'] for o in orders_to_place)
-            ratio = min(1.0, free_base / total_sell_kas) if total_sell_kas > 0 else 1.0
+            # Venta estricta 1:1 por lote completo: cada compra se vende íntegramente a su precio objetivo (+spacing)
+            # Se ordena por precio ascendente para colocar primero las ventas más próximas al precio actual
+            orders_to_place.sort(key=lambda o: o['price'])
+            available_kas = free_base
 
             for o in orders_to_place:
-                amt = round(o['amount'] * ratio * 0.998, 4)
+                if available_kas <= 0.5:
+                    break
+                # Asignación de lote completo 1:1 deduciendo comisión real (0.2%) sin dilución ni ratio
+                lot_qty = min(o['amount'], available_kas)
+                amt = round(lot_qty * 0.998, 4)
                 prc = o['price']
                 if amt * prc >= 1.0:
                     try:
                         order = self.exchange.create_limit_sell_order(self.symbol, amt, prc)
                         placed += 1
-                        print(f"   [SELL VINCULADO] {amt} {base_curr} @ ${prc} (Margen: +{self.spacing}%)")
+                        available_kas -= lot_qty
+                        print(f"   [SELL 1:1 ÍNTEGRO] {amt} {base_curr} @ ${prc} (Margen: +{self.spacing}%)")
                     except Exception as e:
-                        print(f"   [ERROR SELL] @ ${prc}: {e}")
+                        print(f"   [ERROR SELL 1:1] @ ${prc}: {e}")
                         failed += 1
         elif free_base * current_price >= 1.0:
             # Saldo huérfano sin compra registrada previa: venta garantizada por encima del precio de mercado

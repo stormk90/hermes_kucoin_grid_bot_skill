@@ -6,14 +6,15 @@ Bot de Grid Trading Spot para KuCoin con **Motor de Aprendizaje por IA**, análi
 
 ## 🌟 Características Principales
 
-- **Estrategia Grid Inteligente**: Cuadrícula de órdenes límite en KuCoin con agrupación automática de saldo libre y salvaguardas de capital.
+- **Estrategia Grid 1:1 Estricta**: Cuadrícula de órdenes límite en KuCoin con asignación por lote íntegro (+1.35% garantizado sin dilución de capital).
+- **Análisis Cuantitativo de Mercado**: Módulo `market_analyzer.py` para cálculo automático de rango geométrico óptimo, volatilidad (ATR) y RSI.
 - **Motor de IA & Aprendizaje Continuo**:
   - Registro de lecciones y optimizaciones en base de datos SQLite relacional.
   - Análisis diario de sentimiento de mercado (4x al día) con lectura fiel del índice Fear & Greed de CoinMarketCap.
   - Modo **"Seguir Bot"**: Alterna con un solo clic entre seguir las recomendaciones de la IA o respetar tu configuración personalizada.
 - **Dashboard ERP Web Completo**:
   - Gráfico en tiempo real de TradingView sincronizado.
-  - Tabla interactiva de órdenes activas con precio de compra origen, margen y ganancia estimada.
+  - Tabla dinámica de órdenes activas ordenada por proximidad de ejecución en tiempo real.
   - Botón de venta de emergencia a mercado (`Market Sell`) y cancelación segura de órdenes individuales.
   - Ajuste dinámico de parámetros (Capital, Spacing, Niveles, Presets, Stop-Loss).
 - **Notificaciones Telegram**: Alertas en tiempo real de compras y ventas cerradas con desglose de beneficio neto y fees.
