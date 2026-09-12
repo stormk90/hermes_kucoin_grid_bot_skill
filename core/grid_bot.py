@@ -26,6 +26,27 @@ from config import (
 )
 from ai_memory_db import set_persistent_param, get_persistent_param
 
+def acquire_single_instance_lock(lock_path='/tmp/grid_bot.lock'):
+    """
+    Función: acquire_single_instance_lock
+    Garantiza la ejecución exclusiva de una única instancia del Grid Bot
+    mediante bloqueo de archivo a nivel de kernel (fcntl.flock). Evita
+    duplicación de órdenes por procesos en paralelo.
+    """
+    try:
+        import fcntl
+        lock_file = open(lock_path, 'w')
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+        return lock_file
+    except (IOError, BlockingIOError):
+        print(f"[SEGURIDAD] Ya existe otra instancia del Grid Bot ejecutándose con el bloqueo {lock_path}. Abortando.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"[AVISO] No se pudo verificar bloqueo exclusivo ({e}). Continuando con precaución.")
+        return None
+
 def send_telegram(message):
     """
     Función: send_telegram
@@ -877,5 +898,6 @@ class GridBot:
             time.sleep(10)
 
 if __name__ == '__main__':
+    _lock = acquire_single_instance_lock()
     bot = GridBot()
     bot.run()
