@@ -1,0 +1,41 @@
+# Credenciales y Secretos
+.env
+*.env
+*.key
+*.pem
+id_rsa*
+secrets.json
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+
+# Bases de datos y logs operativos
+*.log
+*.sqlite
+*.sqlite3
+*.db
+data/
+logs/
+*.jsonl
+
+# Archivos de datos del exchange
+trades.json
+open_orders.json
+metrics.json
+status.json
+grid_config.json
+market_sentiment.json
+analysis.json
+last_update.json
+price_cache.json
+learning_memory.json
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
