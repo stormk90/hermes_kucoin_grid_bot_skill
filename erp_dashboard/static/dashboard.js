@@ -45,6 +45,7 @@ async function loadMetrics() {
 
         const stats = dash.trade_stats || {};
         const cap = dash.portfolio?.total_balance || 0;
+        const allocatedCapital = parseFloat(dash.grid_config?.capital) || (cap > 0 ? cap : 126.0);
         
         const metricCap = document.getElementById('metricCapital');
         if (metricCap) metricCap.textContent = '$' + cap.toFixed(2);
@@ -56,14 +57,12 @@ async function loadMetrics() {
             const fees = stats.total_fees || 0;
             const sign = pnl >= 0 ? '+' : '';
             
-            // Rentabilidad Ponderada (TWR): preserva el rendimiento real sobre el capital con el que operó el bot ($16)
-            const initialCapital = 16.0;
-            const twrPct = initialCapital > 0 ? (pnl / initialCapital) * 100 : 0;
-            const dilutedPct = cap > 0 ? (pnl / cap) * 100 : 0;
+            // Rentabilidad Real sobre el capital asignado al bot
+            const twrPct = allocatedCapital > 0 ? (pnl / allocatedCapital) * 100 : 0;
             const pnlColor = pnl >= 0 ? '#3fb950' : '#f85149';
             metricPnl.innerHTML = `${sign}$${pnl.toFixed(4)} <span style="font-size:13px;font-weight:600;color:${pnlColor};opacity:0.85;">(${sign}${twrPct.toFixed(2)}%)</span>`;
             metricPnl.className = 'metric-value ' + (pnl >= 0 ? 'positive' : 'negative');
-            metricPnl.title = `Rentabilidad Real (TWR): ${sign}${twrPct.toFixed(2)}% sobre capital operativo inicial ($${initialCapital.toFixed(2)} USDT)\nDiluido sobre balance actual ($${cap.toFixed(2)} USDT): ${sign}${dilutedPct.toFixed(2)}%\nP&L Neto: ${sign}$${pnl.toFixed(4)} USDT | Bruto: +$${gross.toFixed(4)} | Comisiones: -$${fees.toFixed(4)} USDT`;
+            metricPnl.title = `Rentabilidad: ${sign}${twrPct.toFixed(2)}% sobre capital asignado ($${allocatedCapital.toFixed(2)} USDT)\nP&L Neto: ${sign}$${pnl.toFixed(4)} USDT | Bruto: +$${gross.toFixed(4)} | Comisiones: -$${fees.toFixed(4)} USDT`;
         }
 
         const metricWinRate = document.getElementById('metricWinRate');
@@ -96,20 +95,18 @@ async function loadMetrics() {
 
         const pnlVal = (stats.total_pnl !== undefined) ? stats.total_pnl : (stats.net_pnl || 0);
         const dailyPnlUsdt = pnlVal / daysActive;
-        const initialCapital = 16.0;
-        const dailyTwrPct = initialCapital > 0 ? (dailyPnlUsdt / initialCapital) * 100 : 0;
-        const dailyDilutedPct = cap > 0 ? (dailyPnlUsdt / cap) * 100 : 0;
+        const dailyPct = allocatedCapital > 0 ? (dailyPnlUsdt / allocatedCapital) * 100 : 0;
         const dailySign = dailyPnlUsdt >= 0 ? '+' : '';
         const dailyColor = dailyPnlUsdt >= 0 ? '#3fb950' : '#f85149';
 
         const metricDaily = document.getElementById('metricDailyPnl');
         if (metricDaily) {
-            metricDaily.innerHTML = `${dailySign}$${dailyPnlUsdt.toFixed(4)} <span style="font-size:13px;font-weight:600;color:${dailyColor};opacity:0.85;">(${dailySign}${dailyTwrPct.toFixed(2)}%/d)</span>`;
+            metricDaily.innerHTML = `${dailySign}$${dailyPnlUsdt.toFixed(4)} <span style="font-size:13px;font-weight:600;color:${dailyColor};opacity:0.85;">(${dailySign}${dailyPct.toFixed(2)}%/d)</span>`;
             metricDaily.className = 'metric-value ' + (dailyPnlUsdt >= 0 ? 'positive' : 'negative');
-            metricDaily.title = `Rentabilidad Media: ${dailySign}$${dailyPnlUsdt.toFixed(4)} USDT/día (${dailySign}${dailyTwrPct.toFixed(2)}%/d sobre capital operativo de $${initialCapital.toFixed(2)})\nDiluido sobre balance actual ($${cap.toFixed(2)}): ${dailySign}${dailyDilutedPct.toFixed(2)}%/d en ${daysActive.toFixed(2)} días`;
+            metricDaily.title = `Rentabilidad Media: ${dailySign}$${dailyPnlUsdt.toFixed(4)} USDT/día (${dailySign}${dailyPct.toFixed(2)}%/d sobre capital asignado de $${allocatedCapital.toFixed(2)})\nEn ${daysActive.toFixed(2)} días de actividad`;
         }
 
-        renderPairedOperations(cachedRawTrades);
+        renderPairedOperations(cachedRawTrades, allocatedCapital);
     } catch (err) {
         console.error('Error al cargar métricas del bot:', err);
     }
@@ -121,7 +118,7 @@ async function loadMetrics() {
  * a cuánto se compró, a cuánto se vendió y el beneficio neto real en USDT y en porcentaje.
  * Mantiene cada orden como una única fila real del exchange sin partir cantidades.
  */
-function renderPairedOperations(rawTrades) {
+function renderPairedOperations(rawTrades, allocatedCapital = 126.0) {
     const tbody = document.getElementById('operationsTableBody');
     if (!tbody) return;
 
@@ -267,15 +264,14 @@ function renderPairedOperations(rawTrades) {
             .reduce((sum, o) => sum + o.pnlUsdt, 0);
 
         const capEl = document.getElementById('metricCapital');
-        const currentCap = capEl ? (parseFloat(capEl.textContent.replace('$', '')) || 126.90) : 126.90;
-        const baseCapital24h = 16.0;
-        const pct24h = baseCapital24h > 0 ? (pnl24h / baseCapital24h) * 100 : 0;
+        const currentCap = capEl ? (parseFloat(capEl.textContent.replace('$', '')) || allocatedCapital) : allocatedCapital;
+        const pct24h = allocatedCapital > 0 ? (pnl24h / allocatedCapital) * 100 : 0;
         const sign24 = pnl24h >= 0 ? '+' : '';
         const color24 = pnl24h >= 0 ? '#3fb950' : '#f85149';
 
         metricLastDay.innerHTML = `${sign24}$${pnl24h.toFixed(4)} <span style="font-size:13px;font-weight:600;color:${color24};opacity:0.85;">(${sign24}${pct24h.toFixed(2)}%)</span>`;
         metricLastDay.className = 'metric-value ' + (pnl24h >= 0 ? 'positive' : 'negative');
-        metricLastDay.title = `Beneficio neto últimas 24 horas: ${sign24}$${pnl24h.toFixed(4)} USDT (${sign24}${pct24h.toFixed(2)}% sobre capital de $${baseCapital24h.toFixed(2)} de ese período)\nDiluido sobre balance actual ($${currentCap.toFixed(2)}): ${sign24}${(pnl24h / currentCap * 100).toFixed(2)}%`;
+        metricLastDay.title = `Beneficio neto últimas 24 horas: ${sign24}$${pnl24h.toFixed(4)} USDT (${sign24}${pct24h.toFixed(2)}% sobre capital asignado de $${allocatedCapital.toFixed(2)})\nBalance total: $${currentCap.toFixed(2)} USDT`;
     }
 
     // Cálculo de rentabilidad media por operación (%) y Win Rate en base a órdenes reales

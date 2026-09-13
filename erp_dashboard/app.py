@@ -478,11 +478,13 @@ def api_dashboard():
     
     current_price = metrics.get('portfolio', {}).get('current_price', 0)
     real_stats = calculate_real_trade_stats(trades, current_price)
+    grid_cfg = load_json(GRID_CONFIG, {})
 
     return jsonify({
         'portfolio': metrics.get('portfolio', {}),
         'analysis': metrics.get('analysis', {}),
         'trade_stats': real_stats,
+        'grid_config': grid_cfg,
         'learning': {
             'strategies_learned': len(memory['lo_aprendido']),
             'active_tests': len(memory['lo_aprendiendo']),
