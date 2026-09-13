@@ -273,22 +273,29 @@ class GridBot:
         except Exception as e:
             print(f"Error sincronizando open_orders.json: {e}")
 
-    def cancel_old_orders(self):
+    def cancel_old_orders(self, cancel_sells=False):
         """
         Función: cancel_old_orders
-        Cancela todas las órdenes abiertas del par activo en KuCoin.
+        Cancela las órdenes de compra (BUY) para recolocar la rejilla según el mercado.
+        Protege las órdenes de venta (SELL) activas en el exchange (cancel_sells=False)
+        para no resetear su turno ni perturbar sus ganancias en espera de ejecución.
         """
         try:
             open_orders = self.exchange.fetch_open_orders(self.symbol)
             if open_orders:
-                print(f"Cancelando {len(open_orders)} órdenes abiertas en {self.symbol}...")
-                for order in open_orders:
-                    try:
-                        self.exchange.cancel_order(order['id'], self.symbol)
-                        time.sleep(0.1)
-                    except Exception as e:
-                        print(f"Error cancelando orden {order['id']}: {e}")
-                return True
+                orders_to_cancel = [o for o in open_orders if cancel_sells or o.get('side') == 'buy']
+                target_desc = "todas las" if cancel_sells else "de compra (BUY)"
+                if orders_to_cancel:
+                    print(f"Cancelando {len(orders_to_cancel)} órdenes {target_desc} en {self.symbol}...")
+                    for order in orders_to_cancel:
+                        try:
+                            self.exchange.cancel_order(order['id'], self.symbol)
+                            time.sleep(0.1)
+                        except Exception as e:
+                            print(f"Error cancelando orden {order['id']}: {e}")
+                    return True
+                else:
+                    print(f"No hay órdenes de compra que cancelar en {self.symbol}. Las ventas permanecen intactas.")
         except Exception as e:
             print(f"Error cancelando órdenes generales: {e}")
         return False
@@ -409,6 +416,8 @@ class GridBot:
         pending_buys = self.get_pending_buy_inventory()
         spacing_mult = 1.0 + (self.spacing / 100.0)
         decimals = 5 if current_price < 1.0 else (2 if current_price > 50 else 4)
+        open_orders_existing_sells = self.exchange.fetch_open_orders(self.symbol)
+        existing_sell_prices = [float(o['price']) for o in open_orders_existing_sells if o.get('side') == 'sell']
 
         if pending_buys and free_base > 0:
             # Agrupar lotes que no alcancen el mínimo de 1.0 USDT
@@ -438,15 +447,19 @@ class GridBot:
             for o in orders_to_place:
                 if available_kas <= 0.5:
                     break
+                prc = o['price']
+                # Si ya existe una orden de venta activa a este precio, no duplicar ni alterar
+                if any(abs(prc - esp) / prc < 0.001 for esp in existing_sell_prices):
+                    continue
                 # Asignación de lote completo 1:1 deduciendo comisión real (0.2%) sin dilución ni ratio
                 lot_qty = min(o['amount'], available_kas)
                 amt = round(lot_qty * 0.998, 4)
-                prc = o['price']
                 if amt * prc >= 1.0:
                     try:
                         order = self.exchange.create_limit_sell_order(self.symbol, amt, prc)
                         placed += 1
                         available_kas -= lot_qty
+                        existing_sell_prices.append(prc)
                         print(f"   [SELL 1:1 ÍNTEGRO] {amt} {base_curr} @ ${prc} (Margen: +{self.spacing}%)")
                     except Exception as e:
                         print(f"   [ERROR SELL 1:1] @ ${prc}: {e}")
@@ -455,7 +468,7 @@ class GridBot:
             # Saldo huérfano sin compra registrada previa: venta garantizada por encima del precio de mercado
             sell_price = round(current_price * spacing_mult, decimals)
             sell_amount = round(free_base * 0.998, 4)
-            if sell_amount * sell_price >= 1.0:
+            if sell_amount * sell_price >= 1.0 and not any(abs(sell_price - esp) / sell_price < 0.001 for esp in existing_sell_prices):
                 try:
                     order = self.exchange.create_limit_sell_order(self.symbol, sell_amount, sell_price)
                     placed += 1
