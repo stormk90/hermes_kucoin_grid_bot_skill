@@ -8,8 +8,9 @@
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/static/favicon.svg">
     <!-- Estilos en 1 sola columna vertical -->
-    <link rel="stylesheet" href="/static/dashboard.css?v=9.0">
-    <!-- Librería Oficial de TradingView -->
+    <link rel="stylesheet" href="/static/dashboard.css?v=9.2">
+    <!-- Librerías Gráficas: Lightweight Charts (KuCoin Nativo) y TradingView -->
+    <script src="/static/lightweight-charts.standalone.production.js?v=2.0"></script>
     <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
@@ -33,21 +34,6 @@
                 </div>
                 <span>Grid Bot</span> <span>ERP Pro v4</span>
             </div>
-            <div class="coin-selector">
-                <label for="coinSelect">Par:</label>
-                <select id="coinSelect" class="coin-select">
-                    <option value="kaspa" selected>KAS/USDT (Kaspa)</option>
-                    <option value="bitcoin">BTC/USDT (Bitcoin)</option>
-                    <option value="ethereum">ETH/USDT (Ethereum)</option>
-                    <option value="solana">SOL/USDT (Solana)</option>
-                    <option value="ripple">XRP/USDT (Ripple)</option>
-                    <option value="cardano">ADA/USDT (Cardano)</option>
-                    <option value="dogecoin">DOGE/USDT (Dogecoin)</option>
-                    <option value="polkadot">DOT/USDT (Polkadot)</option>
-                    <option value="litecoin">LTC/USDT (Litecoin)</option>
-                    <option value="chainlink">LINK/USDT (Chainlink)</option>
-                </select>
-            </div>
         </div>
         <div class="header-right">
             <!-- Botón Configuración de Estrategias y Operativa Grid Bot -->
@@ -60,13 +46,6 @@
                 ⚙️ Configurar
             </button>
 
-            <!-- Monitor de Precio en Vivo -->
-            <div class="price-badge">
-                <span class="live-dot"></span>
-                <span class="price-val" id="headerPrice">—</span>
-                <span class="price-change" id="headerChange">—</span>
-            </div>
-
             <!-- Botón Refrescar -->
             <button class="btn-refresh" id="btnRefresh" onclick="refreshDashboard()" type="button">
                 🔄 Actualizar
@@ -74,15 +53,76 @@
         </div>
     </header>
 
-    <!-- Sección de Gráfico TradingView Oficial -->
+    <!-- Sección de Gráfico Oficial KuCoin con Órdenes Vivas -->
     <section class="chart-section">
         <div class="chart-card">
             <div class="chart-header-bar">
-                <span class="symbol-title" id="chartSymbolTitle">Gráfico en Vivo: MEXC:KASUSDT</span>
-                <span>🔴 Gráfico Profesional TradingView</span>
+                <div class="chart-header-left">
+                    <!-- Selector de Criptomoneda / Par -->
+                    <div class="coin-selector">
+                        <label for="coinSelect">Par:</label>
+                        <select id="coinSelect" class="coin-select">
+                            <option value="kaspa" selected>KAS/USDT (Kaspa)</option>
+                            <option value="bitcoin">BTC/USDT (Bitcoin)</option>
+                            <option value="ethereum">ETH/USDT (Ethereum)</option>
+                            <option value="solana">SOL/USDT (Solana)</option>
+                            <option value="ripple">XRP/USDT (Ripple)</option>
+                            <option value="cardano">ADA/USDT (Cardano)</option>
+                            <option value="dogecoin">DOGE/USDT (Dogecoin)</option>
+                            <option value="polkadot">DOT/USDT (Polkadot)</option>
+                            <option value="litecoin">LTC/USDT (Litecoin)</option>
+                            <option value="chainlink">LINK/USDT (Chainlink)</option>
+                        </select>
+                    </div>
+
+                    <!-- Monitor de Precio en Vivo -->
+                    <div class="price-badge" title="Precio actual y variación">
+                        <span class="live-dot"></span>
+                        <span class="price-val" id="headerPrice">—</span>
+                        <span class="price-change" id="headerChange">—</span>
+                    </div>
+
+                    <!-- Monedas Disponibles -->
+                    <div class="balance-badge" title="Monedas libres disponibles en KuCoin">
+                        <span class="balance-label">Monedas:</span>
+                        <span class="balance-val" id="chartBaseFree">—</span>
+                    </div>
+
+                    <!-- USDT Disponible -->
+                    <div class="balance-badge" title="Saldo USDT libre disponible en KuCoin">
+                        <span class="balance-label">USDT Disp:</span>
+                        <span class="balance-val" id="chartQuoteFree">—</span>
+                    </div>
+
+                    <!-- Título oculto para compatibilidad con scripts de TradingView -->
+                    <span class="symbol-title" id="chartSymbolTitle" style="display:none;">KAS/USDT · 15m · KuCoin</span>
+
+                    <!-- Selector de Intervalos de Tiempo -->
+                    <div class="chart-intervals" id="chartIntervals">
+                        <button class="interval-btn" data-interval="1m" onclick="changeChartInterval('1m')">1m</button>
+                        <button class="interval-btn" data-interval="5m" onclick="changeChartInterval('5m')">5m</button>
+                        <button class="interval-btn active" data-interval="15m" onclick="changeChartInterval('15m')">15m</button>
+                        <button class="interval-btn" data-interval="1h" onclick="changeChartInterval('1h')">1h</button>
+                        <button class="interval-btn" data-interval="4h" onclick="changeChartInterval('4h')">4h</button>
+                        <button class="interval-btn" data-interval="1d" onclick="changeChartInterval('1d')">1D</button>
+                    </div>
+                </div>
+                <div class="chart-header-right" style="display:flex;align-items:center;gap:8px;">
+                    <!-- Indicador de Última Actualización del ERP / Gráfico -->
+                    <div class="header-status-badge" title="Hora de la última sincronización en vivo del ERP y gráfico">
+                        <span style="color:#8b949e;font-size:11px;">Actualizado:</span>
+                        <span id="chartLastUpdatedTime" style="color:#f0f6fc;font-weight:600;font-family:'SF Mono',Consolas,monospace;font-size:11px;">--:--:--</span>
+                    </div>
+
+                    <!-- Indicador de Estado del Bot (Activo / Pausado / Parado) -->
+                    <div class="header-status-badge" id="chartBotStatusBadge" title="Estado operativo del Grid Bot">
+                        <span class="status-dot green" id="chartBotStatusDot"></span>
+                        <span id="chartBotStatusText" style="color:#3fb950;">Activo</span>
+                    </div>
+                </div>
             </div>
-            <div id="tradingview_widget_box" class="tradingview-container">
-                <!-- TradingView se inyecta dinámicamente aquí -->
+            <div id="tradingview_widget_box" class="tradingview-container" style="position: relative; min-height: 480px; width: 100%;">
+                <!-- Lightweight Charts KuCoin se inyecta dinámicamente aquí -->
             </div>
         </div>
     </section>
@@ -92,13 +132,14 @@
 
         <!-- 1. Panel de Métricas del Bot -->
         <section class="panel">
-            <div class="panel-header">
-                <h2 class="panel-title">📈 Métricas de Rendimiento</h2>
-            </div>
-            <div class="metrics-row">
+            <div class="metrics-row performance-metrics-row">
                 <div class="metric-card">
                     <span class="metric-label">Capital Total</span>
                     <span class="metric-value" id="metricCapital">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">uPnL</span>
+                    <span class="metric-value" id="metricUnrealizedPnl">—</span>
                 </div>
                 <div class="metric-card">
                     <span class="metric-label">P&amp;L Cerrado Total</span>
@@ -119,6 +160,37 @@
                 <div class="metric-card">
                     <span class="metric-label">Operaciones (Tiempo)</span>
                     <span class="metric-value" id="metricTrades">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Panel de Régimen de Mercado y Riesgo Diario -->
+        <section class="panel">
+            <span id="regimeUpdated" style="display:none;">—</span>
+            <div class="metrics-row">
+                <div class="metric-card">
+                    <span class="metric-label">Régimen detectado</span>
+                    <span class="metric-value" id="regimeName">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Acción recomendada</span>
+                    <span class="metric-value" id="regimeAction">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Spacing sugerido</span>
+                    <span class="metric-value" id="regimeSpacing">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Confianza</span>
+                    <span class="metric-value" id="regimeConfidence">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Límite diario</span>
+                    <span class="metric-value" id="riskLimit">—</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Estado de protección</span>
+                    <span class="metric-value" id="riskStatus">—</span>
                 </div>
             </div>
         </section>
@@ -162,6 +234,33 @@
                 </div>
                 <div class="progress-track" title="Ubicación del precio dentro del rango de la rejilla">
                     <div class="progress-fill" id="gridProgressFill" style="width: 50%;"></div>
+                </div>
+            </div>
+
+            <!-- Banner / Tarjeta de Liquidación de Lote Completo -->
+            <div id="lotLiquidationCard" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 14px 18px; margin-bottom: 16px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px;">
+                <div style="display: flex; flex-direction: column; gap: 4px; min-width: 260px;">
+                    <div style="font-size: 13px; font-weight: 700; color: #f0f6fc; display: flex; align-items: center; gap: 8px;">
+                        <span>📦 Lote Actual de Compras (KuCoin):</span>
+                        <span id="lotQtyBadge" style="font-family: monospace; background: #21262d; border: 1px solid #30363d; padding: 2px 8px; border-radius: 4px; color: #58a6ff; font-weight: 600;">0 KAS</span>
+                    </div>
+                    <div style="font-size: 11px; color: #8b949e;">
+                        Precio medio ponderado: <span id="lotAvgBuyPrice" style="color: #c9d1d9; font-weight: 600;">$0.00000</span> | Valor mercado: <span id="lotMarketVal" style="color: #c9d1d9; font-weight: 600;">$0.00</span>
+                    </div>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 18px; flex-wrap: wrap;">
+                    <div style="text-align: right;">
+                        <div style="font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px;">Resultado si vendes ahora:</div>
+                        <div id="lotPnlDiff" style="font-size: 15px; font-weight: 700; color: #8b949e;">$0.00 (0.00%)</div>
+                    </div>
+                    <div style="background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; text-align: right;">
+                        <div style="font-size: 11px; color: #8b949e;">Beneficio Total de tu Cuenta:</div>
+                        <div id="lotProjectedTotal" style="font-size: 14px; font-weight: 700; color: #58a6ff;">0.00% → 0.00%</div>
+                    </div>
+                    <button type="button" class="btn-action-sm" id="btnOpenLiquidateLot" onclick="openLiquidateLotModal()" style="background: #da3633; color: #ffffff; border: 1px solid #f85149; padding: 8px 14px; font-weight: 600; cursor: pointer; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px;">
+                        ⚡ Vender Todo el Lote
+                    </button>
                 </div>
             </div>
 
@@ -235,6 +334,9 @@
             <div class="panel-header">
                 <h2 class="panel-title">🧠 Motor de IA: Reglas Aplicadas &amp; Aprendizaje Continuo</h2>
                 <div style="display:flex;align-items:center;gap:8px;">
+                    <button type="button" id="btnRunMarketAnalysis" onclick="triggerManualMarketAnalysis()" class="btn-action-sm" style="font-size:11px;padding:4px 10px;font-weight:600;display:flex;align-items:center;gap:5px;cursor:pointer;border-radius:6px;background:#238636;color:#ffffff;border:1px solid #2ea043;transition:all 0.2s ease;" title="Ejecuta el análisis técnico (RSI, ATR) y de sentimiento (noticias, Fear & Greed) ahora mismo">
+                        <span>⚡ Analizar Mercado Ahora</span>
+                    </button>
                     <button type="button" id="btnToggleFollowAi" onclick="toggleFollowAi()" class="btn-action-sm" style="font-size:11px;padding:4px 10px;font-weight:600;display:flex;align-items:center;gap:5px;cursor:pointer;border-radius:6px;transition:all 0.2s ease;">
                         <span id="followAiDot" style="width:7px;height:7px;border-radius:50%;background:#8b949e;display:inline-block;"></span>
                         <span id="followAiText">Seguir Bot: OFF</span>
@@ -515,9 +617,29 @@
                     </div>
 
                     <div class="strategy-field">
-                        <label>Capital Asignado (USDT)</label>
-                        <input type="number" id="stratCapital" min="5" step="1" placeholder="Ej: 16.00">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <label style="margin:0;">Capital Asignado (USDT)</label>
+                            <span id="stratCapitalAvailableText" style="font-size:11px;color:#3fb950;font-weight:600;">Disp: ... USDT</span>
+                        </div>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <input type="number" id="stratCapital" min="5" step="1" placeholder="Ej: 16.00" style="flex:1;">
+                            <button type="button" id="btnSetCapitalMax" class="btn-secondary" style="padding:6px 10px;font-size:11px;font-weight:700;color:#58a6ff;background:#21262d;border:1px solid #30363d;border-radius:6px;cursor:pointer;" title="Asignar el 100% del saldo libre disponible">MÁX</button>
+                            <button type="button" id="btnSetCapital75" class="btn-secondary" style="padding:6px 8px;font-size:11px;font-weight:600;color:#c9d1d9;background:#21262d;border:1px solid #30363d;border-radius:6px;cursor:pointer;" title="Asignar el 75% del saldo disponible">75%</button>
+                            <button type="button" id="btnSetCapital50" class="btn-secondary" style="padding:6px 8px;font-size:11px;font-weight:600;color:#c9d1d9;background:#21262d;border:1px solid #30363d;border-radius:6px;cursor:pointer;" title="Asignar el 50% del saldo disponible">50%</button>
+                        </div>
                         <span class="field-desc">Tope máximo de saldo que el bot usará.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>🛑 Techo Máx. por Compra (USDT)</label>
+                        <input type="number" id="stratMaxOrder" min="2" max="500" step="1" placeholder="Ej: 50.00">
+                        <span class="field-desc">Aplica solo a compras: ninguna compra superará este valor. Las ventas liquidan el 100% íntegro de las monedas.</span>
+                    </div>
+
+                    <div class="strategy-field">
+                        <label>🏦 Reserva de Liquidez (USDT)</label>
+                        <input type="number" id="stratReserve" min="0" step="5" placeholder="Ej: 100.00">
+                        <span class="field-desc">Colchón intocable para caídas profundas que el bot no gastará.</span>
                     </div>
 
                     <div class="strategy-field">
@@ -554,9 +676,9 @@
                         </div>
                         <div class="levels-explainer-grid">
                             <div class="levels-stat-box">
-                                <span class="levels-stat-label">Inversión por Orden</span>
+                                <span class="levels-stat-label">Tope por Compra</span>
                                 <span class="levels-stat-val" id="expPerOrderVal">~$2.00 USDT</span>
-                                <span class="levels-stat-sub">Capital / Niveles (Mínimo: $1.00)</span>
+                                <span class="levels-stat-sub">Máx. por orden de compra (Ventas 100% íntegras)</span>
                             </div>
                             <div class="levels-stat-box">
                                 <span class="levels-stat-label">Órdenes de Compra</span>
@@ -590,10 +712,76 @@
         </div>
     </div>
 
+    <!-- MODAL DE CONFIRMACIÓN: LIQUIDACIÓN TOTAL DEL LOTE A MERCADO -->
+    <div class="modal-overlay" id="liquidateLotModal" style="display: none;">
+        <div class="modal-box" style="max-width: 520px;">
+            <div class="modal-header">
+                <h3 class="modal-title" style="color: #f85149;">⚡ Liquidar Lote Completo a Mercado</h3>
+                <button class="modal-close-btn" id="btnCloseLiquidateLot" type="button" onclick="closeLiquidateLotModal()">&times;</button>
+            </div>
+            
+            <div style="background: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; border-radius: 6px; padding: 12px; margin-bottom: 16px; font-size: 12px; color: #ff7b72; line-height: 1.5;">
+                ⚠️ <strong>Acción Irreversible:</strong> Esta operación cancelará todas las órdenes límite de venta pendientes en KuCoin para liberar el saldo y venderá de inmediato todas tus monedas del lote al mejor precio de mercado actual.
+            </div>
+
+            <!-- Desglose Financiero del Lote -->
+            <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 14px; margin-bottom: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px;">
+                <div>
+                    <span style="color: #8b949e;">Cantidad a Liquidar:</span>
+                    <div id="modalLotQty" style="font-weight: 700; color: #58a6ff; font-size: 14px; font-family: monospace;">0 KAS</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e;">Precio Actual Mercado:</span>
+                    <div id="modalLotCurPrice" style="font-weight: 700; color: #f0f6fc; font-size: 14px; font-family: monospace;">$0.00000</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e;">Precio Medio Compra:</span>
+                    <div id="modalLotAvgBuy" style="font-weight: 600; color: #c9d1d9;">$0.00000</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e;">Coste Total Adquisición:</span>
+                    <div id="modalLotCost" style="font-weight: 600; color: #c9d1d9;">$0.00 USDT</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e;">Valor Venta Estimado:</span>
+                    <div id="modalLotVal" style="font-weight: 600; color: #c9d1d9;">$0.00 USDT</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e;">Resultado Neto Lote:</span>
+                    <div id="modalLotPnl" style="font-weight: 700; font-size: 13px;">$0.00 (0.00%)</div>
+                </div>
+                <div style="grid-column: 1 / -1; border-top: 1px solid #21262d; padding-top: 8px; margin-top: 2px;">
+                    <span style="color: #8b949e;">Impacto en Beneficio Total de la Cuenta:</span>
+                    <div id="modalLotProjected" style="font-weight: 700; font-size: 14px; margin-top: 2px; color: #58a6ff;">
+                        +0.00% → +0.00%
+                    </div>
+                    <div id="modalLotProjectedSub" style="font-size: 11px; color: #8b949e; margin-top: 2px;">
+                        Beneficio actual cerrado: $0.00 | Proyectado tras venta: $0.00
+                    </div>
+                </div>
+            </div>
+
+            <!-- Checkbox de Confirmación Explícita -->
+            <label style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #c9d1d9; cursor: pointer; margin-bottom: 14px; user-select: none;">
+                <input type="checkbox" id="chkConfirmLiquidate" onchange="toggleConfirmLiquidateBtn()" style="cursor: pointer; width: 16px; height: 16px;">
+                <span>He revisado las pérdidas/ganancias y confirmo la venta a mercado.</span>
+            </label>
+
+            <div id="liquidateLotStatusMsg" class="modal-status" style="display: none; margin-bottom: 12px;"></div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn-cancel" id="btnCancelLiquidateLot" onclick="closeLiquidateLotModal()">Cancelar</button>
+                <button type="button" class="btn-save" id="btnConfirmExecuteLiquidate" onclick="executeLiquidateLot()" disabled style="background: #da3633; border-color: #f85149; opacity: 0.5; cursor: not-allowed;">
+                    ⚡ Confirmar Liquidación
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Módulos de Soporte del Dashboard ERP -->
-    <script src="/static/dashboard_tradingview.js?v=10.1"></script>
-    <script src="/static/dashboard_modals.js?v=10.1"></script>
+    <script src="/static/dashboard_tradingview.js?v=12.6"></script>
+    <script src="/static/dashboard_modals.js?v=10.2"></script>
     <!-- Script Principal del Dashboard -->
-    <script src="/static/dashboard.js?v=10.2"></script>
+    <script src="/static/dashboard.js?v=12.6"></script>
 </body>
 </html>

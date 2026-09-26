@@ -2,30 +2,25 @@
 ERP Web Grid Bot v4.0 — Velas coherentes + Precios formateados + Trades desde grid
 """
 
-import json
-import os
-import subprocess
-import time
-import random
-import math
-import hashlib
+import json, os, sys, subprocess, time, random, math, hashlib, threading
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, send_from_directory
 import requests
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
-# === Rutas de archivos ===
-LOGS_DIR = '/home/stormk90/workspace/logs'
-METRICS_FILE = os.path.join(LOGS_DIR, 'metrics.json')
-TRADES_FILE = os.path.join(LOGS_DIR, 'trades.json')
-GRID_CONFIG = os.path.join(LOGS_DIR, 'grid_config.json')
-OPEN_ORDERS_FILE = os.path.join(LOGS_DIR, 'open_orders.json')
-MEMORY_FILE = '/home/stormk90/workspace/grid_bot_erp/learning_memory.json'
-LEARNING_LOG = '/home/stormk90/workspace/grid_bot_erp/learning_log.jsonl'
-PRICE_CACHE = '/home/stormk90/workspace/grid_bot_erp/price_cache.json'
-SENTIMENT_FILE = os.path.join(LOGS_DIR, 'market_sentiment.json')
-ANALYSIS_FILE = os.path.join(LOGS_DIR, 'analysis.json')
+HOME_DIR = os.path.expanduser('~')
+WORKSPACE_DIR = os.getenv('WORKSPACE_DIR', os.path.join(HOME_DIR, 'workspace'))
+LOGS_DIR = os.getenv('LOGS_DIR', os.path.join(WORKSPACE_DIR, 'logs'))
+ERP_DIR = os.path.dirname(os.path.abspath(__file__))
+GRID_BOT_DIR = os.path.join(WORKSPACE_DIR, 'grid_bot')
+METRICS_FILE, TRADES_FILE = os.path.join(LOGS_DIR, 'metrics.json'), os.path.join(LOGS_DIR, 'trades.json')
+GRID_CONFIG, OPEN_ORDERS_FILE = os.path.join(LOGS_DIR, 'grid_config.json'), os.path.join(LOGS_DIR, 'open_orders.json')
+MEMORY_FILE, LEARNING_LOG = os.path.join(ERP_DIR, 'learning_memory.json'), os.path.join(ERP_DIR, 'learning_log.jsonl')
+PRICE_CACHE, SENTIMENT_FILE = os.path.join(ERP_DIR, 'price_cache.json'), os.path.join(LOGS_DIR, 'market_sentiment.json')
+ANALYSIS_FILE, REGIME_ADVICE_FILE = os.path.join(LOGS_DIR, 'analysis.json'), os.path.join(LOGS_DIR, 'regime_advice.json')
+DAILY_RISK_FILE = os.path.join(LOGS_DIR, 'daily_risk.json')
+
 
 # Importación segura de memoria de base de datos de IA
 try:
@@ -36,18 +31,8 @@ except ImportError:
     except Exception:
         ai_memory_db = None
 
-# === COIN LIST ===
-COIN_LIST = [
-    {'id': 'kaspa', 'name': 'KAS/USDT', 'symbol': 'KAS', 'default': True},
-    {'id': 'bitcoin', 'name': 'BTC/USDT', 'symbol': 'BTC'}, {'id': 'ethereum', 'name': 'ETH/USDT', 'symbol': 'ETH'},
-    {'id': 'solana', 'name': 'SOL/USDT', 'symbol': 'SOL'}, {'id': 'ripple', 'name': 'XRP/USDT', 'symbol': 'XRP'},
-    {'id': 'cardano', 'name': 'ADA/USDT', 'symbol': 'ADA'}, {'id': 'dogecoin', 'name': 'DOGE/USDT', 'symbol': 'DOGE'},
-    {'id': 'polkadot', 'name': 'DOT/USDT', 'symbol': 'DOT'}, {'id': 'litecoin', 'name': 'LTC/USDT', 'symbol': 'LTC'},
-    {'id': 'chainlink', 'name': 'LINK/USDT', 'symbol': 'LINK'}
-]
-
-# === IN-MEMORY CANDLE CACHE ===
-CANDLE_CACHES = {}
+COIN_LIST = [{'id': c[0], 'name': f'{c[1]}/USDT', 'symbol': c[1], **({'default': True} if len(c) > 2 else {})} for c in [
+    ('kaspa', 'KAS', True), ('bitcoin', 'BTC'), ('ethereum', 'ETH'), ('solana', 'SOL'), ('ripple', 'XRP'), ('cardano', 'ADA'), ('dogecoin', 'DOGE'), ('polkadot', 'DOT'), ('litecoin', 'LTC'), ('chainlink', 'LINK')]]
 
 def load_json(path, default=None):
     try:
@@ -65,7 +50,6 @@ def append_log(path, entry):
     with open(path, 'a') as f:
         f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 
-# === COINGECKO API CLIENT (funciona perfectamente) ===
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 
 def get_coingecko_ticker(coin_id):
@@ -80,15 +64,77 @@ def get_coingecko_ticker(coin_id):
         print(f"CoinGecko ticker error {coin_id}: {e}")
     return None
 
-def get_coingecko_ohlcvs(coin_id, days=1):
-    """Función: get_coingecko_ohlcvs - Obtiene velas OHLCV desde CoinGecko."""
+KUCOIN_INTERVAL_MAP = {
+    '1m': '1min', '3m': '3min', '5m': '5min', '15m': '15min', '30m': '30min',
+    '1h': '1hour', '2h': '2hour', '4h': '4hour', '6h': '6hour', '8h': '8hour',
+    '12h': '12hour', '1d': '1day', '1w': '1week'
+}
+
+KUCOIN_SYMBOL_MAP = {
+    'kaspa': 'KAS-USDT', 'bitcoin': 'BTC-USDT', 'ethereum': 'ETH-USDT', 'solana': 'SOL-USDT',
+    'ripple': 'XRP-USDT', 'cardano': 'ADA-USDT', 'dogecoin': 'DOGE-USDT', 'polkadot': 'DOT-USDT',
+    'litecoin': 'LTC-USDT', 'chainlink': 'LINK-USDT'
+}
+
+CANDLE_CACHE = {}
+
+@app.route('/api/chart/candles', methods=['GET'])
+def api_chart_candles():
+    """
+    Función: api_chart_candles
+    Descripción: Obtiene velas oficiales OHLCV de KuCoin para TradingView Lightweight Charts.
+                 Soporta temporalidades (1m, 5m, 15m, 1h, 4h, 1d) y cuenta con caché en memoria.
+    """
+    coin = request.args.get('coin', 'kaspa').lower()
+    raw_sym = request.args.get('symbol', '').upper().replace('/', '-')
+    symbol = raw_sym if raw_sym else KUCOIN_SYMBOL_MAP.get(coin, 'KAS-USDT')
+    
+    tf = request.args.get('interval', '15m').lower()
+    kucoin_type = KUCOIN_INTERVAL_MAP.get(tf, tf if 'min' in tf or 'hour' in tf or 'day' in tf else '15min')
+    
+    cache_key = f"{symbol}_{kucoin_type}"
+    now = time.time()
+    
+    if cache_key in CANDLE_CACHE and (now - CANDLE_CACHE[cache_key]['ts']) < 8:
+        return jsonify(CANDLE_CACHE[cache_key]['payload'])
+        
     try:
-        r = requests.get(f"{COINGECKO_BASE}/coins/{coin_id}/ohlc", params={'vs_currency': 'usd', 'days': days}, timeout=5)
-        if r.status_code == 200:
-            return [{'timestamp': int(c[0]), 'open': round(float(c[1]), 8), 'high': round(float(c[2]), 8), 'low': round(float(c[3]), 8), 'close': round(float(c[4]), 8), 'volume': 0} for c in r.json().get('ohlc', [])]
+        interval_s = {'1min': 60, '3min': 180, '5min': 300, '15min': 900, '30min': 1800, '1hour': 3600, '2hour': 7200, '4hour': 14400, '6hour': 21600, '8hour': 28800, '12hour': 43200, '1day': 86400}.get(kucoin_type, 900)
+        start_ts = int(now) - (1500 * interval_s)
+        url = f"https://api.kucoin.com/api/v1/market/candles?type={kucoin_type}&symbol={symbol}&startAt={start_ts}&endAt={int(now)}"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            res_json = resp.json()
+            raw_candles = res_json.get('data', [])
+            candles = []
+            volumes = []
+            for c in reversed(raw_candles):
+                t = int(c[0])
+                o = float(c[1])
+                cl = float(c[2])
+                h = float(c[3])
+                l = float(c[4])
+                v = float(c[5])
+                candles.append({'time': t, 'open': o, 'high': h, 'low': l, 'close': cl})
+                v_color = 'rgba(0, 192, 118, 0.25)' if cl >= o else 'rgba(255, 83, 83, 0.25)'
+                volumes.append({'time': t, 'value': v, 'color': v_color})
+            
+            payload = {
+                'success': True,
+                'symbol': symbol,
+                'interval': tf,
+                'current_price': candles[-1]['close'] if candles else 0,
+                'candles': candles,
+                'volumes': volumes
+            }
+            CANDLE_CACHE[cache_key] = {'payload': payload, 'ts': now}
+            return jsonify(payload)
+        else:
+            return jsonify({'success': False, 'error': f'KuCoin HTTP {resp.status_code}'}), 502
     except Exception as e:
-        print(f"CoinGecko OHLCV error {coin_id}: {e}")
-    return None
+        if cache_key in CANDLE_CACHE:
+            return jsonify(CANDLE_CACHE[cache_key]['payload'])
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 PRICE_CACHE_GLOBAL = {}
 
@@ -111,60 +157,6 @@ def get_crypto_prices_batch(coin_ids):
             if pd: PRICE_CACHE_GLOBAL[cid] = {'data': pd, 'ts': now}
     return {cid: PRICE_CACHE_GLOBAL.get(cid, {}).get('data') for cid in coin_ids if cid in PRICE_CACHE_GLOBAL}
 
-def get_crypto_ohlcvs_batch(coin_ids, tf):
-    """Función: get_crypto_ohlcvs_batch - Obtiene velas con caché de 30s."""
-    now = time.time()
-    for cid in coin_ids:
-        k = f"ohlcvs_{cid}"
-        if k not in PRICE_CACHE_GLOBAL or now - PRICE_CACHE_GLOBAL[k]['ts'] > 30:
-            ohlcv = get_coingecko_ohlcvs(cid, days=1)
-            if ohlcv: PRICE_CACHE_GLOBAL[k] = {'data': ohlcv, 'ts': now}
-    return {cid: PRICE_CACHE_GLOBAL[f"ohlcvs_{cid}"]['data'] for cid in coin_ids if f"ohlcvs_{cid}" in PRICE_CACHE_GLOBAL}
-
-# === CANDLESTICK GENERATION — Coherente y conectada ===
-def _volatility_for(coin_id):
-    """Función: _volatility_for - Retorna volatilidad simulada según la moneda."""
-    return {'kaspa': 0.003, 'bitcoin': 0.001, 'ethereum': 0.002, 'solana': 0.005, 'ripple': 0.002, 'cardano': 0.004, 'dogecoin': 0.006, 'polkadot': 0.004, 'litecoin': 0.002, 'chainlink': 0.005}.get(coin_id, 0.003)
-
-def _volume_base(coin_id):
-    """Función: _volume_base - Retorna volumen simulado según la moneda."""
-    return {'kaspa': 300000, 'bitcoin': 5000000, 'ethereum': 3000000, 'solana': 2000000, 'ripple': 1500000, 'cardano': 800000, 'dogecoin': 1200000, 'polkadot': 600000, 'litecoin': 900000, 'chainlink': 700000}.get(coin_id, 300000)
-
-def _interval_seconds(tf):
-    """Función: _interval_seconds - Retorna los segundos por vela."""
-    return {'1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400}.get(tf, 3600)
-
-def _num_candles(tf):
-    """Función: _num_candles - Retorna la cantidad de velas a generar."""
-    return {'1m': 60, '5m': 48, '15m': 32, '1h': 24, '4h': 14}.get(tf, 24)
-
-def _generate_candles_connected_to(base_price, tf, coin_id, seed=None):
-    """Función: _generate_candles_connected_to - Genera velas conectadas al precio actual."""
-    interval_s, num, now = _interval_seconds(tf), _num_candles(tf), datetime.now()
-    vol, vol_base = _volatility_for(coin_id), _volume_base(coin_id)
-    if seed: random.seed(seed)
-    candles, current_price = [], base_price * random.uniform(0.92, 1.08)
-    for i in range(num - 1):
-        t = now - timedelta(seconds=(num - 1 - i) * interval_s)
-        ch = random.gauss(0, vol)
-        o, c = current_price, current_price * (1 + ch)
-        hu, hd = abs(ch) * random.uniform(0.5, 2.0), abs(ch) * random.uniform(0.5, 2.0)
-        candles.append({'timestamp': int(t.timestamp() * 1000), 'open': round(o, 8), 'high': round(max(o, c) * (1 + hu), 8), 'low': round(min(o, c) * (1 - hd), 8), 'close': round(c, 8), 'volume': round(vol_base * random.uniform(0.5, 1.5), 2)})
-        current_price = c
-    if candles:
-        candles[-1]['close'] = round(base_price, 8)
-        candles[-1]['high'] = round(max(candles[-1]['high'], base_price), 8)
-        candles[-1]['low'] = round(min(candles[-1]['low'], base_price), 8)
-    return candles
-
-def _live_candle(base_price, tf, coin_id):
-    """Función: _live_candle - Genera la vela actual viva sincronizada con el precio real."""
-    interval_s = _interval_seconds(tf)
-    now_ts = int(datetime.now().timestamp())
-    candle_time = datetime.fromtimestamp(now_ts - (now_ts % interval_s))
-    return {'timestamp': int(candle_time.timestamp() * 1000), 'open': round(base_price, 8), 'high': round(base_price, 8), 'low': round(base_price, 8), 'close': round(base_price, 8), 'volume': round(_volume_base(coin_id) * random.uniform(0.5, 1.5), 2)}
-
-# === API: Control Modo Seguir Recomendaciones de la IA ===
 @app.route('/api/learning/follow-ai', methods=['GET', 'POST'])
 def api_ai_follow_toggle():
     """
@@ -177,6 +169,7 @@ def api_ai_follow_toggle():
     if request.method == 'POST':
         data = request.json or {}
         new_state = bool(data.get('enabled', not cfg.get('follow_ai', False)))
+        previous_spacing = float(cfg.get('spacing', 1.35) or 1.35)
         cfg['follow_ai'] = new_state
         if new_state:
             # Guardar backup de la configuración del usuario si no existe
@@ -186,15 +179,17 @@ def api_ai_follow_toggle():
                     'num_levels': cfg.get('num_levels', 8),
                     'mode': cfg.get('mode', 'personalizado')
                 }
-            # Aplicar recomendación de la IA
+            # Aplicar la recomendación de régimen vigente; sentimiento queda como fallback.
+            regime = load_json(REGIME_ADVICE_FILE, {})
             s_data = load_json(SENTIMENT_FILE, {})
             s_eval = s_data.get('sentiment_analysis', {})
-            rec_spacing = float(s_eval.get('suggested_spacing', 1.35))
-            rec_preset = s_eval.get('recommended_preset', 'equilibrado')
+            rec_spacing = float(regime.get('recommended_spacing_pct', s_eval.get('suggested_spacing', 1.35)))
+            rec_preset = regime.get('action', s_eval.get('recommended_preset', 'balanced_grid'))
             cfg['spacing'] = rec_spacing
             cfg['mode'] = rec_preset
-            cfg['force_rebalance'] = True
-            msg = f"Modo Seguir IA activado: aplicado preset {rec_preset.upper()} con spacing {rec_spacing}%."
+            changed = abs(previous_spacing - rec_spacing) >= 0.01
+            cfg['force_rebalance'] = bool(cfg.get('force_rebalance', False) or changed)
+            msg = f"Modo Seguir IA activado: preset {rec_preset.upper()} con spacing {rec_spacing}%." + (" Se solicita rebalanceo por cambio real." if changed else " No se cancelan órdenes: la configuración ya coincide.")
         else:
             # Restaurar configuración personalizada del usuario
             manual_cfg = cfg.get('user_manual_config', {})
@@ -226,12 +221,19 @@ def init_memory():
         save_json(MEMORY_FILE, {"lo_aprendiendo": [], "lo_aprendido": [], "errores_comunes": [], "stats": {"total_pruebas": 0, "pruebas_exitosas": 0, "pruebas_fallidas": 0, "total_trades": 0, "win_rate": 0.0, "avg_profit": 0.0, "avg_loss": 0.0, "best_trade": 0.0, "worst_trade": 0.0, "last_updated": datetime.now().isoformat()}})
     return load_json(MEMORY_FILE)
 
-# === API ENDPOINTS ===
 @app.route('/api/metrics')
 def api_metrics():
     """Función: api_metrics - Devuelve métricas, portfolio y precio en vivo."""
     data = load_json(METRICS_FILE, {})
     return jsonify({'analysis': data.get('analysis', {}), 'portfolio': data.get('portfolio', {}), 'live_price': get_crypto_price_single('kaspa'), 'timestamp': datetime.now().isoformat()})
+
+LOT_INVENTORY_FILE = os.path.join(LOGS_DIR, 'lot_inventory.json')
+
+@app.route('/api/lots')
+def api_lots():
+    """Función: api_lots - Devuelve el inventario persistente de lotes y trazabilidad 1:1."""
+    data = load_json(LOT_INVENTORY_FILE, {'lots': [], 'mapped_base': 0, 'total_base': 0, 'unmapped_base': 0})
+    return jsonify(data)
 
 @app.route('/api/trades')
 def api_trades():
@@ -270,21 +272,13 @@ def api_learning_log():
 
 @app.route('/api/learning/rules')
 def api_learning_rules():
-    """
-    Función: api_learning_rules
-    Devuelve las políticas de seguridad activas del bot y el registro de lecciones
-    y optimizaciones aprendidas por la IA a partir de SQLite (ai_memory_db) y caché.
-    """
+    """Función: api_learning_rules - Devuelve políticas de seguridad y lecciones aprendidas por la IA."""
     category = request.args.get('category', 'todas')
-    grid_cfg = load_json(GRID_CONFIG, {})
-    spacing = float(grid_cfg.get('spacing', 1.35))
-    mode = grid_cfg.get('stop_loss_mode', 'hold')
-    trades = load_json(TRADES_FILE, [])
+    grid_cfg, trades, sentiment_data = load_json(GRID_CONFIG, {}), load_json(TRADES_FILE, []), load_json(SENTIMENT_FILE, {})
+    spacing, mode = float(grid_cfg.get('spacing', 1.35)), grid_cfg.get('stop_loss_mode', 'hold')
     stats = calculate_real_trade_stats(trades)
-    sentiment_data = load_json(SENTIMENT_FILE, {})
     s_eval = sentiment_data.get('sentiment_analysis', {})
-    regime_name = s_eval.get('regime', 'Consolidación Óptima')
-    regime_icon = s_eval.get('icon', '⚖️')
+    regime_name, regime_icon = s_eval.get('regime', 'Consolidación Óptima'), s_eval.get('icon', '⚖️')
     suggested_sp = s_eval.get('suggested_spacing', spacing)
 
     rules = [
@@ -298,11 +292,9 @@ def api_learning_rules():
     lessons = []
     if ai_memory_db is not None:
         try:
-            db_lessons = ai_memory_db.get_all_lessons(category=category, limit=20)
-            for dl in db_lessons:
+            for dl in ai_memory_db.get_all_lessons(category=category, limit=20):
                 lessons.append({'time': dl['category'].replace('_', ' ').title(), 'type': dl['category'], 'icon': dl['icon'], 'text': f"{dl['title']}: {dl['description']}"})
-        except Exception:
-            pass
+        except Exception: pass
     if not lessons:
         lessons = [
             {'time': 'Sentimiento', 'type': 'macro', 'icon': regime_icon, 'text': f"Análisis matutino: {regime_name}. Spacing recomendado por IA: {suggested_sp}%."},
@@ -310,39 +302,57 @@ def api_learning_rules():
             {'time': 'Hoy', 'type': 'salvaguarda', 'icon': '🛡️', 'text': "Lotes menores a 1 USDT agrupados hacia niveles superiores para cumplir el mínimo de KuCoin sin degradar el margen."},
             {'time': 'Histórico', 'type': 'eficiencia', 'icon': '📈', 'text': f"{completed} ciclos cerrados exitosamente con 100% Win Rate y ganancia neta acumulada de +${net_pnl:.4f} USDT."}
         ]
-
     analysis_data = load_json(ANALYSIS_FILE, {})
     fng_data = analysis_data.get('fear_and_greed') or sentiment_data.get('fear_and_greed', {})
-    return jsonify({
-        'rules': rules, 'lessons': lessons,
-        'stats': {'completed_cycles': completed, 'win_rate': 100.0, 'net_pnl': net_pnl, 'fee_savings_pct': 38.5},
-        'fear_and_greed': fng_data,
-        'timestamp': datetime.now().isoformat()
-    })
+    return jsonify({'rules': rules, 'lessons': lessons, 'stats': {'completed_cycles': completed, 'win_rate': 100.0, 'net_pnl': net_pnl, 'fee_savings_pct': 38.5}, 'fear_and_greed': fng_data, 'timestamp': datetime.now().isoformat()})
 
 @app.route('/api/learning/daily-recommendation')
 def api_learning_daily_recommendation():
-    """
-    Función: api_learning_daily_recommendation
-    Devuelve la última recomendación generada por la IA tras el informe matutino
-    desde la base de datos relacional SQLite (acciones a seguir y cosas a evitar).
-    """
+    """Función: api_learning_daily_recommendation - Devuelve la última recomendación generada por la IA en SQLite."""
     if ai_memory_db is not None:
         try:
             rec = ai_memory_db.get_latest_recommendation()
-            if rec:
-                return jsonify({'success': True, 'recommendation': rec})
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)}), 500
+            if rec: return jsonify({'success': True, 'recommendation': rec})
+        except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
     return jsonify({'success': False, 'recommendation': None})
 
 @app.route('/api/learning/sentiment')
 def api_learning_sentiment():
-    """
-    Función: api_learning_sentiment
-    Devuelve el último análisis matutino de sentimiento de mercado y noticias.
-    """
+    """Función: api_learning_sentiment - Devuelve el último análisis matutino de sentimiento de mercado y noticias."""
     return jsonify(load_json(SENTIMENT_FILE, {}))
+
+ANALYSIS_LOCK = threading.Lock()
+
+@app.route('/api/learning/analyze-now', methods=['POST'])
+def api_learning_analyze_now():
+    """
+    Función: api_learning_analyze_now
+    Descripción: Ejecuta de forma segura e inmediata el análisis de mercado (RSI, ATR)
+                 y de sentimiento (noticias, Fear & Greed y recomendaciones en SQLite).
+    """
+    if not ANALYSIS_LOCK.acquire(blocking=False):
+        return jsonify({'success': False, 'error': 'Ya hay un análisis de mercado en curso. Espera unos segundos.'}), 429
+    try:
+        script_path = os.path.join(GRID_BOT_DIR, "run_daily_market_analysis.sh")
+        if not os.path.exists(script_path):
+            script_path = os.path.join(os.path.dirname(__file__), "run_daily_market_analysis.sh")
+
+        subprocess.run([script_path], capture_output=True, text=True, timeout=90)
+        recom = ai_memory_db.get_latest_recommendation() if ai_memory_db else None
+        return jsonify({
+            'success': True,
+            'message': 'Análisis integral de mercado y sentimiento completado con éxito.',
+            'sentiment': load_json(SENTIMENT_FILE, {}),
+            'analysis': load_json(ANALYSIS_FILE, {}),
+            'recommendation': recom,
+            'timestamp': datetime.now().isoformat()
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'El análisis tardó demasiado tiempo en responder (timeout).'}), 504
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        ANALYSIS_LOCK.release()
 
 def calculate_real_trade_stats(trades, current_price=0.0):
     """
@@ -465,6 +475,29 @@ def calculate_real_trade_stats(trades, current_price=0.0):
         'avg_gross_pct': round(sum(c.get('pnl_pct', 0.0) for c in wins) / len(wins), 2) if wins else 0.0
     }
 
+def get_bot_status():
+    """Función: get_bot_status - Evalúa con precisión el estado operativo del bot: 'activo', 'pausado' o 'parado'."""
+    try:
+        res = subprocess.run(["systemctl", "--user", "is-active", "grid-bot.service"], capture_output=True, text=True, timeout=2)
+        sys_active = (res.stdout.strip() == 'active')
+    except Exception:
+        sys_active = False
+
+    try:
+        p_res = subprocess.run(["/usr/bin/pgrep", "-f", "grid_bot.py"], capture_output=True, text=True, timeout=2)
+        is_proc = bool(p_res.stdout.strip())
+    except Exception:
+        is_proc = False
+
+    cfg = load_json(GRID_CONFIG, {})
+    user_paused = bool(cfg.get('user_paused', False))
+    daily_risk = load_json(DAILY_RISK_FILE, {})
+    risk_halted = bool(daily_risk.get('halted', False))
+
+    if sys_active or is_proc:
+        return 'pausado' if (risk_halted or user_paused) else 'activo'
+    return 'pausado' if user_paused else 'parado'
+
 @app.route('/api/dashboard')
 def api_dashboard():
     """
@@ -479,12 +512,19 @@ def api_dashboard():
     current_price = metrics.get('portfolio', {}).get('current_price', 0)
     real_stats = calculate_real_trade_stats(trades, current_price)
     grid_cfg = load_json(GRID_CONFIG, {})
+    regime = load_json(REGIME_ADVICE_FILE, {})
+    daily_risk = load_json(DAILY_RISK_FILE, {})
+    bot_status = get_bot_status()
 
     return jsonify({
         'portfolio': metrics.get('portfolio', {}),
-        'analysis': metrics.get('analysis', {}),
+        'analysis': load_json(ANALYSIS_FILE, {}),
         'trade_stats': real_stats,
         'grid_config': grid_cfg,
+        'regime': regime,
+        'daily_risk': daily_risk,
+        'bot_status': bot_status,
+        'lot_inventory': load_json(os.path.join(LOGS_DIR, 'lot_inventory.json'), {}),
         'learning': {
             'strategies_learned': len(memory['lo_aprendido']),
             'active_tests': len(memory['lo_aprendiendo']),
@@ -612,73 +652,45 @@ def api_orders_active():
     stop_loss_mult = float(grid_config.get('stop_loss_multiple', 0.95))
     stop_loss_price = round(grid_min * stop_loss_mult, 5)
     stop_loss_pct = round((1.0 - stop_loss_mult) * 100, 1)
+
+    # Cálculo financiero de liquidación total del lote actual de compras
+    total_lot_qty = sum(float(o.get('quantity', 0)) for o in sell_orders)
+    total_lot_cost = sum((float(o.get('origin_buy_price') or current_price) * float(o.get('quantity', 0))) for o in sell_orders)
+    weighted_buy_price = (total_lot_cost / total_lot_qty) if total_lot_qty > 0 else current_price
+    market_val = total_lot_qty * current_price
+    lot_fee = (total_lot_cost + market_val) * 0.002
+    lot_net_pnl = (market_val - total_lot_cost) - lot_fee
+    lot_pnl_pct = ((current_price - weighted_buy_price) / weighted_buy_price * 100) if weighted_buy_price > 0 else 0.0
+    allocated_cap = float(grid_config.get('capital', 126.0)) or 126.0
+    lot_impact_pct = (lot_net_pnl / allocated_cap * 100) if allocated_cap > 0 else 0.0
+    trades_stats = calculate_real_trade_stats(trades, current_price)
+    curr_total_pnl = trades_stats.get('net_pnl', 0.0)
+    projected_total_pnl = curr_total_pnl + lot_net_pnl
+    projected_total_pct = (projected_total_pnl / allocated_cap * 100) if allocated_cap > 0 else 0.0
+
+    lote_info = {
+        'total_qty': round(total_lot_qty, 2),
+        'total_cost': round(total_lot_cost, 2),
+        'market_value': round(market_val, 2),
+        'weighted_buy_price': round(weighted_buy_price, 5),
+        'current_price': round(current_price, 5),
+        'net_pnl_usdt': round(lot_net_pnl, 4),
+        'net_pnl_pct': round(lot_pnl_pct, 2),
+        'impact_pct': round(lot_impact_pct, 2),
+        'curr_closed_pnl': round(curr_total_pnl, 4),
+        'curr_closed_pct': round((curr_total_pnl / allocated_cap * 100) if allocated_cap > 0 else 0.0, 2),
+        'projected_total_pnl': round(projected_total_pnl, 4),
+        'projected_total_pct': round(projected_total_pct, 2)
+    }
         
     return jsonify({
         'orders': orders, 'current_price': current_price, 'grid_min': grid_min, 'grid_max': grid_max,
         'grid_levels': grid_levels, 'stop_loss_price': stop_loss_price, 'stop_loss_pct': stop_loss_pct,
-        'stop_loss_mode': grid_config.get('stop_loss_mode', 'hold'),
+        'stop_loss_mode': grid_config.get('stop_loss_mode', 'hold'), 'lote_info': lote_info,
         'stats': {
             'total_buy_orders': len(buy_orders), 'total_sell_orders': len(sell_orders), 'total_open_orders': len(orders),
             'grid_position_pct': round(((current_price - grid_min) / (grid_max - grid_min)) * 100, 2) if grid_max > grid_min else 0,
         },
-        'timestamp': datetime.now().isoformat()
-    })
-
-@app.route('/api/chart/candles')
-def api_candles():
-    """Velas OHLCV REALES de KuCoin"""
-    coin_id = request.args.get('coin', 'kaspa')
-    tf = request.args.get('tf', '1h')
-    live = request.args.get('live', 'true')
-    
-    cache_key = f"ohlcvs_{coin_id}_{tf}"
-    now = time.time()
-    
-    # Get real price
-    price_data = get_crypto_price_single(coin_id)
-    if not price_data:
-        return jsonify({'error': f'No se pudo obtener precio de {coin_id}', 'timestamp': datetime.now().isoformat()})
-    
-    base_price = price_data.get('usd', 0)
-    if base_price <= 0:
-        return jsonify({'error': 'Precio inválido', 'timestamp': datetime.now().isoformat()})
-    
-    # Get real OHLCV from KuCoin
-    ohlcv_candles = get_coingecko_ohlcvs(coin_id, days=1)
-    
-    if not ohlcv_candles:
-        # Fallback: simulated candles if KuCoin fails
-        historical = _generate_candles_connected_to(base_price, tf, coin_id, seed=int(time.time()) % 10000)
-        live_candle = _live_candle(base_price, tf, coin_id)
-        return jsonify({
-            'coin': coin_id,
-            'symbol': next((c['symbol'] for c in COIN_LIST if c['id'] == coin_id), coin_id),
-            'timeframe': tf,
-            'source': 'simulated',
-            'candles': historical + [live_candle],
-            'current_price': base_price,
-            'timestamp': datetime.now().isoformat()
-        })
-    
-    # Use KuCoin candles directly — they're already real!
-    # Sort by timestamp ascending
-    ohlcv_candles.sort(key=lambda x: x['timestamp'])
-    
-    # Add live candle if requested
-    if live == 'true':
-        live_candle = _live_candle(base_price, tf, coin_id)
-        all_candles = ohlcv_candles + [live_candle]
-    else:
-        all_candles = ohlcv_candles
-    
-    return jsonify({
-        'coin': coin_id,
-        'symbol': next((c['symbol'] for c in COIN_LIST if c['id'] == coin_id), coin_id),
-        'timeframe': tf,
-        'source': 'kucoin',
-        'candles': all_candles,
-        'current_price': base_price,
-        'total_candles': len(ohlcv_candles),
         'timestamp': datetime.now().isoformat()
     })
 
@@ -695,57 +707,32 @@ def api_refresh():
     return jsonify({'status': 'no_change', 'price': live_price.get('usd', 0) if live_price else None})
 
 # API GESTION DE CONFIGURACION Y CREDENCIALES (KUCOIN)
-ENV_FILE_PATH = "/home/stormk90/workspace/grid_bot/.env"
+ENV_FILE_PATH = os.path.join(GRID_BOT_DIR, ".env")
+
 
 @app.route('/api/config/keys', methods=['GET', 'POST'])
 def api_config_keys():
-    """
-    Funcion: api_config_keys
-    Descripcion: Permite consultar (con enmascaramiento seguro) y actualizar
-                 las credenciales de KuCoin desde el Dashboard ERP.
-    """
+    """Función: api_config_keys - Consulta (enmascarada) y actualiza credenciales de KuCoin."""
     if request.method == 'POST':
         data = request.json or {}
-        new_key = data.get('api_key', '').strip()
-        new_secret = data.get('api_secret', '').strip()
-        new_pass = data.get('api_passphrase', '').strip()
-
+        new_key, new_secret, new_pass = data.get('api_key', '').strip(), data.get('api_secret', '').strip(), data.get('api_passphrase', '').strip()
         if not new_key or not new_secret or not new_pass:
             return jsonify({'success': False, 'error': 'Todos los campos son obligatorios'}), 400
-
-        # Guardar en .env de forma segura
-        env_content = f"""# Credenciales seguras KuCoin - Grid Bot Pichita
-KUCOIN_API_KEY={new_key}
-KUCOIN_API_SECRET={new_secret}
-KUCOIN_API_PASSPHRASE={new_pass}
-"""
-        with open(ENV_FILE_PATH, 'w') as f:
-            f.write(env_content)
+        env_content = f"# Credenciales seguras KuCoin - Grid Bot Pichita\nKUCOIN_API_KEY={new_key}\nKUCOIN_API_SECRET={new_secret}\nKUCOIN_API_PASSPHRASE={new_pass}\n"
+        with open(ENV_FILE_PATH, 'w') as f: f.write(env_content)
         os.chmod(ENV_FILE_PATH, 0o600)
-
-        # Actualizar variables de entorno en el proceso activo
-        os.environ['KUCOIN_API_KEY'] = new_key
-        os.environ['KUCOIN_API_SECRET'] = new_secret
-        os.environ['KUCOIN_API_PASSPHRASE'] = new_pass
-
-        # Reiniciar el proceso de grid_bot de forma consistente para aplicar claves
+        os.environ['KUCOIN_API_KEY'], os.environ['KUCOIN_API_SECRET'], os.environ['KUCOIN_API_PASSPHRASE'] = new_key, new_secret, new_pass
         subprocess.run(["systemctl", "--user", "restart", "grid-bot.service"], check=False)
-
         return jsonify({'success': True, 'message': 'Credenciales actualizadas y Grid Bot reiniciado con exito.'})
-
-    # Metodo GET: devolver claves enmascaradas por seguridad
-    current_key = ''
-    current_pass = ''
+    current_key, current_pass = '', ''
     if os.path.exists(ENV_FILE_PATH):
         with open(ENV_FILE_PATH, 'r') as ef:
             for l in ef:
                 l = l.strip()
                 if l.startswith('KUCOIN_API_KEY='): current_key = l.split('=', 1)[1].strip()
                 elif l.startswith('KUCOIN_API_PASSPHRASE='): current_pass = l.split('=', 1)[1].strip()
-    
     masked_key = f"{current_key[:6]}...{current_key[-4:]}" if len(current_key) > 10 else "No configurada"
     masked_pass = f"{current_pass[:2]}...{current_pass[-2:]}" if len(current_pass) > 4 else "Configurada"
-
     return jsonify({'api_key_masked': masked_key, 'passphrase_masked': masked_pass, 'is_configured': bool(current_key and current_pass)})
 
 # API PANEL DE CONTROL DE ESTRATEGIAS Y REJILLA (KUCOIN)
@@ -767,6 +754,9 @@ def api_grid_strategy():
             mode = data.get('mode', 'personalizado')
             symbol = data.get('symbol', 'KAS/USDT').strip().upper()
 
+            max_order = float(data.get('max_order_usdt', 50.0))
+            reserve = float(data.get('reserve_usdt', 0.0))
+
             # Validaciones de seguridad y limites de exchange
             if grid_min <= 0 or grid_max <= grid_min:
                 return jsonify({'success': False, 'error': 'Rango invalido (Min debe ser menor a Max)'}), 400
@@ -774,41 +764,45 @@ def api_grid_strategy():
                 return jsonify({'success': False, 'error': 'Spacing debe estar entre 0.3% y 20%'}), 400
             if num_levels < 2 or num_levels > 30:
                 return jsonify({'success': False, 'error': 'Niveles deben estar entre 2 y 30'}), 400
+            if max_order < 1.0 or reserve < 0:
+                return jsonify({'success': False, 'error': 'Tope por orden debe ser >= 1 USDT y reserva >= 0'}), 400
 
             config = load_json(GRID_CONFIG, {})
             config.update({
                 'grid_min': grid_min, 'grid_max': grid_max, 'spacing': spacing, 'num_levels': num_levels,
-                'capital': capital, 'mode': mode, 'symbol': symbol,
+                'capital': capital, 'max_order_usdt': max_order, 'reserve_usdt': reserve, 'mode': mode, 'symbol': symbol,
                 'stop_loss_price': float(data.get('stop_loss_price', round(grid_min * 0.95, 5))),
                 'stop_loss_mode': data.get('stop_loss_mode', 'hold'), 'trailing_grid': bool(data.get('trailing_grid', True)),
                 'force_rebalance': True, 'levels': [], 'updated_at': datetime.now().isoformat()
             })
             save_json(GRID_CONFIG, config)
             if ai_memory_db:
-                try:
-                    ai_memory_db.set_persistent_param('capital', capital)
-                except Exception:
-                    pass
+                for k, v in [('capital', capital), ('max_order_usdt', max_order), ('reserve_usdt', reserve)]:
+                    try: ai_memory_db.set_persistent_param(k, v)
+                    except Exception: pass
 
-            # Reiniciar servicio para que aplique la nueva estrategia inmediatamente
             subprocess.run(["systemctl", "--user", "restart", "grid-bot.service"], check=False)
-
-            return jsonify({
-                'success': True,
-                'message': 'Estrategia aplicada y Grid Bot reiniciado con exito.',
-                'config': config
-            })
+            return jsonify({'success': True, 'message': 'Estrategia y límites de riesgo aplicados con éxito.', 'config': config})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
 
-    # Metodo GET: consultar configuracion actual
+    # Metodo GET: consultar configuracion actual y liquidez
     config = load_json(GRID_CONFIG, {})
-    is_active = False
+    bot_status = get_bot_status()
+    is_active = (bot_status == 'activo')
+
+    free_usdt, total_usdt = 0.0, 0.0
     try:
-        res = subprocess.run(["/usr/bin/pgrep", "-f", "grid_bot.py"], capture_output=True, text=True)
-        is_active = bool(res.stdout.strip())
+        ex = get_kucoin_exchange()
+        bal = ex.fetch_balance()
+        free_usdt = float(bal.get('free', {}).get('USDT', 0))
+        total_usdt = float(bal.get('total', {}).get('USDT', 0))
     except Exception:
-        is_active = False
+        try:
+            m = load_json(METRICS_FILE, {})
+            free_usdt = float(m.get('portfolio', {}).get('quote_free', 0))
+            total_usdt = float(m.get('portfolio', {}).get('quote_balance', 0))
+        except Exception: pass
 
     g_min = float(config.get('grid_min', 0.033))
     sl_price = float(config.get('stop_loss_price', round(g_min * 0.95, 5)))
@@ -816,39 +810,32 @@ def api_grid_strategy():
 
     return jsonify({
         'grid_min': g_min, 'grid_max': config.get('grid_max', 0.041), 'spacing': config.get('spacing', 1.35),
-        'num_levels': config.get('num_levels', 8), 'capital': config.get('capital', 16.0),
+        'num_levels': config.get('num_levels', 8), 'capital': float(config.get('capital', 16.0)),
+        'max_order_usdt': float(config.get('max_order_usdt', 50.0)), 'reserve_usdt': float(config.get('reserve_usdt', 0.0)),
+        'free_usdt': round(free_usdt, 2), 'total_usdt': round(total_usdt, 2),
         'mode': config.get('mode', 'equilibrado'), 'symbol': config.get('symbol', 'KAS/USDT'),
         'stop_loss_price': sl_price, 'stop_loss_pct': sl_pct,
         'stop_loss_mode': config.get('stop_loss_mode', 'hold'), 'trailing_grid': config.get('trailing_grid', True),
-        'is_running': is_active, 'timestamp': datetime.now().isoformat()
+        'is_running': is_active, 'bot_status': bot_status, 'timestamp': datetime.now().isoformat()
     })
 
 @app.route('/api/grid/rebalance', methods=['POST'])
 def api_grid_rebalance():
-    """
-    Funcion: api_grid_rebalance
-    Descripcion: Fuerza la cancelacion de ordenes obsoletas y recoloca
-                 la cuadricula geometrica completa en KuCoin.
-    """
+    """Función: api_grid_rebalance - Fuerza cancelación y rebalanceo del grid."""
     try:
         config = load_json(GRID_CONFIG, {})
-        config['force_rebalance'] = True
-        config['levels'] = []
+        config.update({'force_rebalance': True, 'levels': []})
         save_json(GRID_CONFIG, config)
         subprocess.run(["systemctl", "--user", "restart", "grid-bot.service"], check=False)
-        return jsonify({'success': True, 'message': 'Rebalanceo iniciado. Se cancelarán las órdenes y se redistribuirá el capital completo en KuCoin.'})
+        return jsonify({'success': True, 'message': 'Rebalanceo iniciado. Se cancelarán las órdenes y se redistribuirá el capital.'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/grid/sync-orphans', methods=['POST'])
 def api_grid_sync_orphans():
-    """
-    Funcion: api_grid_sync_orphans
-    Descripcion: Reconcilia saldo libre de KAS y coloca la orden de venta
-                 limite correspondiente si faltaba en KuCoin.
-    """
+    """Función: api_grid_sync_orphans - Reconcilia saldo libre de base y coloca órdenes límite pendientes."""
     try:
-        cmd = "import sys; sys.path.append('/home/stormk90/workspace/grid_bot'); from grid_bot import GridBot; b = GridBot(); ticker = b.exchange.fetch_ticker('KAS/USDT'); b.reconcile_orphan_inventory(ticker['last'])"
+        cmd = f"import sys; sys.path.append('{GRID_BOT_DIR}'); from grid_bot import GridBot; b = GridBot(); ticker = b.exchange.fetch_ticker('KAS/USDT'); b.reconcile_orphan_inventory(ticker['last'])"
         subprocess.run(["python3", "-c", cmd], timeout=30, check=False)
         return jsonify({'success': True, 'message': 'Reconciliacion de inventario completada.'})
     except Exception as e:
@@ -856,123 +843,111 @@ def api_grid_sync_orphans():
 
 @app.route('/api/grid/toggle-state', methods=['POST'])
 def api_grid_toggle_state():
-    """
-    Funcion: api_grid_toggle_state
-    Descripcion: Pausa o reanuda la operativa del Grid Bot via systemd.
-    """
+    """Función: api_grid_toggle_state - Pausa o reanuda la operativa del Grid Bot via systemd."""
     try:
         res = subprocess.run(["systemctl", "--user", "is-active", "grid-bot.service"], capture_output=True, text=True)
         is_active = (res.stdout.strip() == 'active')
-        
-        if is_active:
-            subprocess.run(["systemctl", "--user", "stop", "grid-bot.service"], check=False)
-            new_state = False
-            msg = 'Grid Bot pausado de forma segura.'
-        else:
-            subprocess.run(["systemctl", "--user", "start", "grid-bot.service"], check=False)
-            new_state = True
-            msg = 'Grid Bot reanudado y operando.'
-
-        return jsonify({'success': True, 'is_running': new_state, 'message': msg})
+        cfg = load_json(GRID_CONFIG, {})
+        cfg['user_paused'] = is_active
+        save_json(GRID_CONFIG, cfg)
+        subprocess.run(["systemctl", "--user", "stop" if is_active else "start", "grid-bot.service"], check=False)
+        new_status = 'pausado' if is_active else 'activo'
+        return jsonify({'success': True, 'is_running': (new_status == 'activo'), 'bot_status': new_status, 'message': 'Grid Bot pausado de forma segura.' if is_active else 'Grid Bot reanudado y operando.'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def get_kucoin_exchange():
+    """Función: get_kucoin_exchange - Inicializa el cliente CCXT de KuCoin de forma segura."""
+    if GRID_BOT_DIR not in sys.path:
+        sys.path.append(GRID_BOT_DIR)
+    import ccxt
+
+    from config import KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE
+    return ccxt.kucoin({
+        'apiKey': KUCOIN_API_KEY, 'secret': KUCOIN_API_SECRET,
+        'password': KUCOIN_API_PASSPHRASE, 'enableRateLimit': True
+    })
+
 @app.route('/api/trades/market-sell', methods=['POST'])
 def api_market_sell():
-    """
-    Función: api_market_sell
-    Descripción: Permite vender de inmediato a mercado una posición activa,
-                 cancelando la orden límite de venta y ejecutando la venta en KuCoin.
-    """
+    """Función: api_market_sell - Vende a mercado una posición activa individual."""
     data = request.json or {}
-    amount = float(data.get('amount', 0))
-    symbol = data.get('symbol', 'KAS/USDT')
-
-    if amount <= 0:
-        return jsonify({'success': False, 'error': 'Cantidad a vender inválida'}), 400
-
+    amount, symbol = float(data.get('amount', 0)), data.get('symbol', 'KAS/USDT')
+    if amount <= 0: return jsonify({'success': False, 'error': 'Cantidad a vender inválida'}), 400
     try:
-        sys.path.append('/home/stormk90/workspace/grid_bot')
-        import ccxt
-        from config import KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE
-        ex = ccxt.kucoin({
-            'apiKey': KUCOIN_API_KEY,
-            'secret': KUCOIN_API_SECRET,
-            'password': KUCOIN_API_PASSPHRASE,
-            'enableRateLimit': True
-        })
-
-        # Cancelar ordenes limite de venta existentes del par para liberar saldo
-        open_orders = ex.fetch_open_orders(symbol)
-        sell_orders = [o for o in open_orders if o['side'] == 'sell']
-        for so in sell_orders:
-            try:
-                ex.cancel_order(so['id'], symbol)
-                time.sleep(0.1)
-            except Exception as ce:
-                print(f"Aviso cancelando orden previa: {ce}")
-
+        ex = get_kucoin_exchange()
+        for so in [o for o in ex.fetch_open_orders(symbol) if o['side'] == 'sell']:
+            try: ex.cancel_order(so['id'], symbol); time.sleep(0.08)
+            except Exception: pass
         base_curr = symbol.split('/')[0]
         bal = ex.fetch_balance()
         free_base = float(bal.get('free', {}).get(base_curr, 0))
         sell_amount = round(min(amount, free_base) * 0.998, 4)
-
-        if sell_amount <= 0:
-            return jsonify({'success': False, 'error': f'No hay {base_curr} libre disponible para vender'}), 400
-
+        if sell_amount <= 0: return jsonify({'success': False, 'error': f'No hay {base_curr} libre disponible'}), 400
         ticker = ex.fetch_ticker(symbol)
-        current_price = float(ticker['last'])
-        if (sell_amount * current_price) < 1.0:
-            return jsonify({'success': False, 'error': 'El valor de la venta es menor a 1 USDT (mínimo de KuCoin)'}), 400
-
+        if (sell_amount * float(ticker['last'])) < 1.0: return jsonify({'success': False, 'error': 'Menor a 1 USDT (mínimo KuCoin)'}), 400
         order = ex.create_market_sell_order(symbol, sell_amount)
         time.sleep(0.5)
+        new_orders = [{'id': o['id'], 'symbol': o.get('symbol', symbol), 'side': o['side'], 'price': float(o['price']), 'amount': float(o['amount']), 'cost': float(o.get('cost') or (float(o['price']) * float(o['amount']))), 'status': o['status'], 'timestamp': o['datetime']} for o in ex.fetch_open_orders(symbol)]
+        save_json(OPEN_ORDERS_FILE, new_orders)
+        return jsonify({'success': True, 'message': f'Venta de {sell_amount} {base_curr} ejecutada.', 'order_id': order['id']})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-        new_open_orders = ex.fetch_open_orders(symbol)
-        orders_data = [{'id': o['id'], 'symbol': o.get('symbol', symbol), 'side': o['side'], 'price': float(o['price']), 'amount': float(o['amount']), 'cost': float(o.get('cost') or (float(o['price']) * float(o['amount']))), 'status': o['status'], 'timestamp': o['datetime']} for o in new_open_orders]
-        with open(OPEN_ORDERS_FILE, 'w') as f:
-            json.dump(orders_data, f, indent=2)
-
+@app.route('/api/trades/liquidate-lot', methods=['POST'])
+def api_liquidate_lot():
+    """
+    Función: api_liquidate_lot
+    Descripción: Cancela todas las órdenes límite de venta de KuCoin y liquida de inmediato
+                 todo el lote acumulado de compras a precio de mercado.
+    """
+    data = request.json or {}
+    symbol = data.get('symbol', 'KAS/USDT')
+    try:
+        ex = get_kucoin_exchange()
+        # 1. Cancelar todas las órdenes de venta abiertas del par
+        open_orders = ex.fetch_open_orders(symbol)
+        for so in [o for o in open_orders if o['side'] == 'sell']:
+            try: ex.cancel_order(so['id'], symbol); time.sleep(0.08)
+            except Exception: pass
+        # 2. Consultar el saldo total libre acumulado de la moneda base
+        base_curr = symbol.split('/')[0]
+        bal = ex.fetch_balance()
+        free_base = float(bal.get('free', {}).get(base_curr, 0))
+        sell_amount = round(free_base * 0.998, 4)
+        if sell_amount <= 0.5:
+            return jsonify({'success': False, 'error': f'No hay saldo suficiente de {base_curr} para liquidar'}), 400
+        ticker = ex.fetch_ticker(symbol)
+        curr_p = float(ticker['last'])
+        if (sell_amount * curr_p) < 1.0:
+            return jsonify({'success': False, 'error': 'El valor total es inferior a 1 USDT (mínimo de KuCoin)'}), 400
+        # 3. Ejecutar orden de venta a mercado en KuCoin
+        order = ex.create_market_sell_order(symbol, sell_amount)
+        time.sleep(0.5)
+        # 4. Actualizar registro local de órdenes abiertas
+        new_orders = [{'id': o['id'], 'symbol': o.get('symbol', symbol), 'side': o['side'], 'price': float(o['price']), 'amount': float(o['amount']), 'cost': float(o.get('cost') or (float(o['price']) * float(o['amount']))), 'status': o['status'], 'timestamp': o['datetime']} for o in ex.fetch_open_orders(symbol)]
+        save_json(OPEN_ORDERS_FILE, new_orders)
         return jsonify({
             'success': True,
-            'message': f'Venta a mercado de {sell_amount} {base_curr} ejecutada con éxito en KuCoin.',
-            'order_id': order['id']
+            'message': f'Liquidación total completada: Se vendieron {sell_amount} {base_curr} a mercado a ~${curr_p:.5f}.',
+            'order_id': order['id'], 'sold_amount': sell_amount, 'price': curr_p
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/orders/cancel', methods=['POST'])
 def api_cancel_single_order():
-    """
-    Función: api_cancel_single_order
-    Descripción: Cancela de forma segura una orden individual en el exchange KuCoin
-                 mediante su ID y actualiza el registro local de órdenes activas.
-    """
+    """Función: api_cancel_single_order - Cancela una orden individual en KuCoin."""
     data = request.json or {}
-    order_id = data.get('order_id')
-    symbol = data.get('symbol', 'KAS/USDT')
-
-    if not order_id:
-        return jsonify({'success': False, 'error': 'ID de orden no proporcionado'}), 400
-
+    order_id, symbol = data.get('order_id'), data.get('symbol', 'KAS/USDT')
+    if not order_id: return jsonify({'success': False, 'error': 'ID de orden no proporcionado'}), 400
     try:
         ex = get_kucoin_exchange()
-        # Cancelar la orden específica en KuCoin
         result = ex.cancel_order(order_id, symbol)
-
         time.sleep(0.5)
-
-        # Actualizar archivo local de open_orders
-        new_open_orders = ex.fetch_open_orders(symbol)
-        orders_data = [{'id': o['id'], 'symbol': o.get('symbol', symbol), 'side': o['side'], 'price': float(o['price']), 'amount': float(o['amount']), 'cost': float(o.get('cost') or (float(o['price']) * float(o['amount']))), 'status': o['status'], 'timestamp': o['datetime']} for o in new_open_orders]
-        with open(OPEN_ORDERS_FILE, 'w') as f:
-            json.dump(orders_data, f, indent=2)
-
-        return jsonify({
-            'success': True,
-            'message': f'Orden {order_id} cancelada correctamente en KuCoin.',
-            'result': result
-        })
+        new_orders = [{'id': o['id'], 'symbol': o.get('symbol', symbol), 'side': o['side'], 'price': float(o['price']), 'amount': float(o['amount']), 'cost': float(o.get('cost') or (float(o['price']) * float(o['amount']))), 'status': o['status'], 'timestamp': o['datetime']} for o in ex.fetch_open_orders(symbol)]
+        save_json(OPEN_ORDERS_FILE, new_orders)
+        return jsonify({'success': True, 'message': f'Orden {order_id} cancelada.', 'result': result})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -986,7 +961,6 @@ def dashboard():
     """Renderiza el panel de control principal del bot."""
     return render_template('dashboard.html')
 
-# === INICIALIZAR AL ARRANCAR ===
 init_memory()
 
 if __name__ == '__main__':

@@ -33,6 +33,14 @@ analysis.json
 last_update.json
 price_cache.json
 learning_memory.json
+lot_inventory.json
+execution_ledger.json
+daily_risk.json
+regime_advice.json
+*.bak
+*.tmp
+*.backup*
+
 
 # Archivos de sistema operativo y editores
 .DS_Store
